@@ -127,6 +127,27 @@ def create_tables():
         ADD COLUMN IF NOT EXISTS candle_pattern TEXT;
         """)
 
+def truncate_tables():
+    """Truncate all tables in the database."""
+    with db_cursor() as cursor:
+        # Disable foreign key checks while truncating
+        cursor.execute("""
+        DO $$ 
+        BEGIN
+            -- Truncate all tables in a single transaction
+            TRUNCATE TABLE 
+                ohlc_data,
+                emas,
+                rsi,
+                pivots,
+                chandelier_exit,
+                obv,
+                tickers
+            CASCADE;
+        END $$;
+        """)
+        logger.info("All tables truncated successfully")
+
 def init_db():
     """Initialize the database with required tables and indexes."""
     try:

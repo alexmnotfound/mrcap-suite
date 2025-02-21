@@ -36,7 +36,7 @@ def fetch_market_data(
     with db_cursor() as cursor:
         # Fetch OHLC data
         cursor.execute("""
-        SELECT timestamp, open, high, low, close, volume
+        SELECT timestamp, open, high, low, close, volume, candle_pattern
         FROM ohlc_data
         WHERE ticker = %s 
         AND timeframe = %s
@@ -45,7 +45,7 @@ def fetch_market_data(
         """, (ticker, db_timeframe, start_time, end_time))
         
         df = pd.DataFrame(cursor.fetchall(), 
-                         columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+                         columns=['timestamp', 'open', 'high', 'low', 'close', 'volume', 'candle_pattern'])
         
         if df.empty:
             return df

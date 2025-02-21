@@ -47,15 +47,19 @@ python -m libs.market_data.init_db
 ## Usage
 1. Fetch Market Data
 ```bash
-python scripts/run_market_data.py
+python -m scripts.fetch_market_data
 ```
 2. View Market Data
 ```bash
-python scripts/show_market_data.py
+python -m scripts.show_market_data
 ```
-3. Run Analysis
+3. Find By Conditions
 ```bash
-python scripts/fetch_analysis.py
+python -m scripts.find_by_conditions Doji --rsi-min 30 --rsi-max 70
+```
+4. Run Analysis
+```bash
+python -m scripts.fetch_analysis
 ```
 
 ## Project Structure

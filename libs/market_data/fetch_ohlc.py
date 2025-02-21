@@ -6,17 +6,18 @@ import pandas as pd
 import logging
 import numpy as np
 import time
+from libs.market_data.config import APIConfig 
 
 logger = logging.getLogger(__name__)
 
 TICKERS = ["BTCUSDT", "ETHUSDT"]
 TIMEFRAMES = {
-    "1D": "1d", 
-    "4H": "4h", 
-    "1H": "1h",
-    "1M": "1M"  # Add monthly timeframe
+    '1h': '1h',
+    '4h': '4h',
+    '1d': '1d',
+    '1M': '1M'
 }
-BINANCE_API = "https://api.binance.com/api/v3/klines"
+BINANCE_API = f"{APIConfig.BASE_URL}/api/v3/klines"
 PERIODS = [11, 22, 50, 200]
 
 def get_ticker(cursor, ticker: str):
@@ -118,6 +119,12 @@ def fetch_ohlc(ticker: str, interval: str, start_time: datetime = None, end_time
             retry_count = 0
             
         except requests.RequestException as e:
+            logger.error(f"Request failed: {str(e)}")
+            if hasattr(e, 'response') and e.response is not None:
+                logger.error(f"Response status: {e.response.status_code}")
+                logger.error(f"Response body: {e.response.text}")
+            else:
+                logger.error("No response received from server")
             retry_count += 1
             if retry_count > max_retries:
                 logger.error(f"Failed to fetch data after {max_retries} retries")
@@ -152,53 +159,49 @@ def get_interval_ms(interval: str) -> int:
     
     return number * multipliers[unit.lower()]
 
-def save_emas(cursor, ticker: str, timeframe: str, timestamps: list, closes: list):
+def save_emas(cursor, ticker: str, timeframe: str, df: pd.DataFrame, save_timestamps: list):
     """Calculate and save EMAs for different periods."""
     for period in PERIODS:
-        ema_values = add_ema(closes, period=period)
+        ema_values = add_ema(df['Close'].values, period=period)
+        ema_series = pd.Series(ema_values, index=df.index)
         
-        for idx, timestamp in enumerate(timestamps):
-            query = """
+        # Only save values for specified timestamps
+        for timestamp in save_timestamps:
+            if pd.isna(ema_series[timestamp]):
+                continue
+                
+            cursor.execute("""
             INSERT INTO emas (ticker, timeframe, timestamp, period, value)
             VALUES (%s, %s, %s, %s, %s)
-            ON CONFLICT (ticker, timeframe, timestamp, period) DO UPDATE 
-            SET value = EXCLUDED.value;
-            """
-            cursor.execute(query, (
-                ticker,
-                timeframe, 
-                timestamp,
-                period,
-                float(ema_values[idx])
-            ))
+            ON CONFLICT (ticker, timeframe, timestamp, period) 
+            DO UPDATE SET value = EXCLUDED.value;
+            """, (ticker, timeframe, timestamp, period, float(ema_series[timestamp])))
 
-def save_rsi(cursor, ticker: str, timeframe: str, timestamps: list, closes: list, period: int = 14):
+def save_rsi(cursor, ticker: str, timeframe: str, df: pd.DataFrame, save_timestamps: list, period: int = 14):
     """Calculate and save RSI values."""
-    # Create DataFrame for RSI calculation
-    df = pd.DataFrame({'Close': closes}, index=timestamps)
-    df = add_rsi(df, period=period)
+    # Calculate RSI for the full dataset
+    df_rsi = add_rsi(df, period=period)
     
-    # Save RSI values
-    for timestamp, row in df.iterrows():
-        if pd.isna(row['rsi']):
+    # Save RSI values only for specified timestamps
+    for timestamp in save_timestamps:
+        if timestamp not in df_rsi.index:
             continue
             
+        row = df_rsi.loc[timestamp]
+        
         # Handle potential NaN or infinite values
-        rsi_value = row['rsi']
+        rsi_value = row.get('rsi', None)
         rsi_slope = row.get('rsi_slope', None)
         rsi_div = row.get('rsi_div', None)
         
         # Convert to None if value is NaN or infinite
         if pd.isna(rsi_value) or np.isinf(rsi_value):
-            rsi_value = None
+            continue
+            
         if pd.isna(rsi_slope) or np.isinf(rsi_slope):
             rsi_slope = None
         if pd.isna(rsi_div) or np.isinf(rsi_div):
             rsi_div = None
-            
-        # Skip if main RSI value is None
-        if rsi_value is None:
-            continue
             
         query = """
         INSERT INTO rsi (ticker, timeframe, timestamp, period, value, slope, divergence)
@@ -218,115 +221,104 @@ def save_rsi(cursor, ticker: str, timeframe: str, timestamps: list, closes: list
             float(rsi_div) if rsi_div is not None else None
         ))
 
-def save_pivots(cursor, ticker: str, timeframe: str, timestamps: list, df_ohlc: pd.DataFrame):
-    """Calculate and save Pivot Points."""
-    df = add_pivots(df_ohlc)
+def save_pivots(cursor, ticker: str, timeframe: str, df: pd.DataFrame, save_timestamps: list):
+    """Calculate and save pivot points."""
+    # Calculate pivots for the full dataset
+    df_pivots = add_pivots(df)
     
-    # List of all pivot levels
-    pivot_levels = ['PP', 'R1', 'R2', 'R3', 'R4', 'R5', 'S1', 'S2', 'S3', 'S4', 'S5']
-    
-    for timestamp, row in df.iterrows():
-        for level in pivot_levels:
-            if pd.isna(row[level]):
-                continue
-                
-            query = """
-            INSERT INTO pivots (ticker, timeframe, timestamp, level, value)
-            VALUES (%s, %s, %s, %s, %s)
-            ON CONFLICT (ticker, timeframe, timestamp, level) DO UPDATE 
-            SET value = EXCLUDED.value;
-            """
-            cursor.execute(query, (
-                ticker,
-                timeframe,
-                timestamp,
-                level,
-                float(row[level])
-            ))
+    # Save pivot values only for specified timestamps
+    for timestamp in save_timestamps:
+        if timestamp not in df_pivots.index:
+            continue
+            
+        row = df_pivots.loc[timestamp]
+        
+        # Skip if no pivot values
+        if pd.isna(row.get('pivot')):
+            continue
+            
+        cursor.execute("""
+        INSERT INTO pivots (
+            ticker, timeframe, timestamp,
+            pivot, r1, r2, r3, s1, s2, s3
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (ticker, timeframe, timestamp) DO UPDATE SET
+            pivot = EXCLUDED.pivot,
+            r1 = EXCLUDED.r1,
+            r2 = EXCLUDED.r2,
+            r3 = EXCLUDED.r3,
+            s1 = EXCLUDED.s1,
+            s2 = EXCLUDED.s2,
+            s3 = EXCLUDED.s3;
+        """, (
+            ticker, timeframe, timestamp,
+            float(row['pivot']),
+            float(row['r1']),
+            float(row['r2']),
+            float(row['r3']),
+            float(row['s1']),
+            float(row['s2']),
+            float(row['s3'])
+        ))
 
-def save_chandelier_exit(cursor, ticker: str, timeframe: str, df_ohlc: pd.DataFrame, 
+def save_chandelier_exit(cursor, ticker: str, timeframe: str, df: pd.DataFrame, 
                         period: int = 22, multiplier: float = 3.0):
     """Calculate and save Chandelier Exit values."""
     logger.debug(f"Calculating Chandelier Exit for {ticker} {timeframe}")
-    logger.debug(f"Input DataFrame shape: {df_ohlc.shape}")
+    logger.debug(f"Input DataFrame shape: {df.shape}")
     
     try:
-        # Validate input DataFrame
-        required_cols = ['Open', 'High', 'Low', 'Close']
-        missing_cols = [col for col in required_cols if col not in df_ohlc.columns]
-        if missing_cols:
-            raise ValueError(f"Missing required columns: {missing_cols}")
-        
-        if df_ohlc.empty:
-            logger.warning(f"Empty DataFrame for {ticker} {timeframe}, skipping Chandelier Exit")
-            return
-            
-        print(df_ohlc.head())
         # Calculate Chandelier Exit
-        df = add_chandelier_exit(df_ohlc, period=period, multiplier=multiplier)
-        
-        # Verify calculation results
-        ce_cols = ['ce_long_stop', 'ce_short_stop', 'ce_direction', 'ce_signal']
-        missing_ce_cols = [col for col in ce_cols if col not in df.columns]
-        if missing_ce_cols:
-            raise ValueError(f"Chandelier Exit calculation failed, missing columns: {missing_ce_cols}")
-        
-        logger.debug(f"Calculated Chandelier Exit values: {len(df)} rows")
+        df_ce = add_chandelier_exit(df, period=period, multiplier=multiplier)
         
         # Save values
-        rows_saved = 0
-        for timestamp, row in df.iterrows():
+        for timestamp, row in df_ce.iterrows():
             if pd.isna(row['ce_long_stop']):
                 logger.debug(f"Skipping row with NaN values at {timestamp}")
                 continue
                 
-            try:
-                query = """
-                INSERT INTO chandelier_exit 
-                (ticker, timeframe, timestamp, period, multiplier, long_stop, short_stop, direction, signal)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (ticker, timeframe, timestamp, period, multiplier) DO UPDATE 
-                SET long_stop = EXCLUDED.long_stop,
-                    short_stop = EXCLUDED.short_stop,
-                    direction = EXCLUDED.direction,
-                    signal = EXCLUDED.signal;
-                """
-                cursor.execute(query, (
-                    ticker,
-                    timeframe,
-                    timestamp,
-                    period,
-                    multiplier,
-                    float(row['ce_long_stop']),
-                    float(row['ce_short_stop']),
-                    int(row['ce_direction']),
-                    int(row['ce_signal'])
-                ))
-                rows_saved += 1
+            # Convert boolean signal to BUY/SELL
+            signal = 'BUY' if row['ce_signal'] else 'SELL'
                 
-            except (ValueError, TypeError) as e:
-                logger.error(f"Error converting Chandelier Exit values at {timestamp}: {e}")
-                logger.debug(f"Row values: {row[ce_cols]}")
-                raise
-            except Exception as e:
-                logger.error(f"Database error saving Chandelier Exit at {timestamp}: {e}")
-                raise
-        
-        logger.info(f"Saved {rows_saved} Chandelier Exit values for {ticker} {timeframe}")
-        
+            cursor.execute("""
+            INSERT INTO chandelier_exit (
+                ticker, timeframe, timestamp, period, multiplier,
+                long_stop, short_stop, direction, signal
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (ticker, timeframe, timestamp) DO UPDATE SET
+                period = EXCLUDED.period,
+                multiplier = EXCLUDED.multiplier,
+                long_stop = EXCLUDED.long_stop,
+                short_stop = EXCLUDED.short_stop,
+                direction = EXCLUDED.direction,
+                signal = EXCLUDED.signal;
+            """, (
+                ticker, timeframe, timestamp, period, multiplier,
+                float(row['ce_long_stop']),
+                float(row['ce_short_stop']),
+                int(row['ce_direction']),
+                signal
+            ))
+            
     except Exception as e:
-        logger.error(f"Failed to calculate/save Chandelier Exit for {ticker} {timeframe}: {e}")
+        logger.error(f"Failed to calculate/save Chandelier Exit for {ticker} {timeframe}: {str(e)}")
         raise
 
-def save_obv(cursor, ticker: str, timeframe: str, df_ohlc: pd.DataFrame):
+def save_obv(cursor, ticker: str, timeframe: str, df: pd.DataFrame, save_timestamps: list):
     """Calculate and save OBV values."""
-    df = add_obv(df_ohlc, ma_type='SMA + BB')
+    # Calculate OBV for the full dataset
+    df_obv = add_obv(df, ma_type='SMA + BB')
     
-    for timestamp, row in df.iterrows():
+    # Save OBV values only for specified timestamps
+    for timestamp in save_timestamps:
+        if timestamp not in df_obv.index:
+            continue
+            
+        row = df_obv.loc[timestamp]
         if pd.isna(row['obv']):
             continue
             
-        query = """
+        cursor.execute("""
         INSERT INTO obv (ticker, timeframe, timestamp, value, ma_value, bb_upper, bb_lower)
         VALUES (%s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (ticker, timeframe, timestamp) DO UPDATE 
@@ -334,74 +326,55 @@ def save_obv(cursor, ticker: str, timeframe: str, df_ohlc: pd.DataFrame):
             ma_value = EXCLUDED.ma_value,
             bb_upper = EXCLUDED.bb_upper,
             bb_lower = EXCLUDED.bb_lower;
-        """
-        cursor.execute(query, (
+        """, (
             ticker,
             timeframe,
             timestamp,
             float(row['obv']),
-            float(row['obv_ma']) if 'obv_ma' in row else None,
-            float(row['obv_bb_upper']) if 'obv_bb_upper' in row else None,
-            float(row['obv_bb_lower']) if 'obv_bb_lower' in row else None
+            float(row['obv_ma']) if 'obv_ma' in row and not pd.isna(row['obv_ma']) else None,
+            float(row['obv_bb_upper']) if 'obv_bb_upper' in row and not pd.isna(row['obv_bb_upper']) else None,
+            float(row['obv_bb_lower']) if 'obv_bb_lower' in row and not pd.isna(row['obv_bb_lower']) else None
         ))
 
 def save_to_db(data, ticker, timeframe):
     """Insert OHLC data and calculate indicators."""
     try:
         with db_cursor() as cursor:
-            ticker = get_ticker(cursor, ticker)
+            timeframe = timeframe.lower() if timeframe != '1M' else timeframe
             
             timestamps = []
-            closes = []
             df_ohlc = pd.DataFrame()
             
             for candle in data:
                 try:
                     timestamp = datetime.fromtimestamp(candle[0] / 1000, timezone.utc)
                     open_price, high, low, close, volume = map(float, candle[1:6])
-                    
                     timestamps.append(timestamp)
-                    closes.append(close)
-                    
-                    # Add to OHLC DataFrame for pivot calculations
                     df_ohlc.loc[timestamp, ['Open', 'High', 'Low', 'Close', 'Volume']] = [open_price, high, low, close, volume]
                     
-                    query = """
+                    # Save OHLC data
+                    cursor.execute("""
                     INSERT INTO ohlc_data (ticker, timeframe, open, high, low, close, volume, timestamp)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (ticker, timeframe, timestamp) DO NOTHING;
-                    """
-                    cursor.execute(query, (ticker, timeframe, open_price, high, low, close, volume, timestamp))
+                    ON CONFLICT (ticker, timeframe, timestamp) DO UPDATE SET 
+                    open = EXCLUDED.open,
+                    high = EXCLUDED.high,
+                    low = EXCLUDED.low,
+                    close = EXCLUDED.close,
+                    volume = EXCLUDED.volume;
+                    """, (ticker, timeframe, open_price, high, low, close, volume, timestamp))
                     
-                    # Save candlestick pattern
-                    pattern = add_candlestick_patterns(df_ohlc).loc[timestamp, 'candle_pattern']
-                    cursor.execute("""
-                    UPDATE ohlc_data 
-                    SET candle_pattern = %s
-                    WHERE ticker = %s 
-                    AND timeframe = %s 
-                    AND timestamp = %s
-                    """, (pattern, ticker, timeframe, timestamp))
-                    
-                except (ValueError, TypeError) as e:
-                    logger.error(f"Error processing candle data: {candle}")
-                    raise ValueError(f"Invalid candle data format") from e
                 except Exception as e:
                     logger.error(f"Error saving candle to database: {e}")
                     raise
             
-            try:
-                # Calculate and save all indicators
-                save_emas(cursor, ticker, timeframe, timestamps, closes)
-                save_rsi(cursor, ticker, timeframe, timestamps, closes)
-                save_pivots(cursor, ticker, timeframe, timestamps, df_ohlc)
-                save_chandelier_exit(cursor, ticker, timeframe, df_ohlc)
-                save_obv(cursor, ticker, timeframe, df_ohlc)
-                
-            except Exception as e:
-                logger.error(f"Error calculating indicators: {str(e)}")
-                raise
-                
+            # Calculate and save indicators
+            save_emas(cursor, ticker, timeframe, df_ohlc, timestamps)
+            save_rsi(cursor, ticker, timeframe, df_ohlc, timestamps)
+            save_pivots(cursor, ticker, timeframe, df_ohlc, timestamps)
+            save_chandelier_exit(cursor, ticker, timeframe, df_ohlc, period=22)
+            save_obv(cursor, ticker, timeframe, df_ohlc, timestamps)
+            
     except Exception as e:
         logger.error(f"Database error while saving data: {str(e)}")
         raise
@@ -445,3 +418,97 @@ def update_ohlc(start_time=None, end_time=None, tickers=None, timeframes=None):
                 raise
     
     logger.info("Data update completed successfully")
+
+def get_required_history(timeframe: str) -> int:
+    """Calculate required number of candles based on timeframe and longest indicator."""
+    # Base number of candles needed (e.g., EMA-200 needs 200 candles)
+    BASE_CANDLES = 200
+
+    # Add buffer for calculations
+    BUFFER = 50
+    
+    return BASE_CANDLES + BUFFER
+
+def update_indicators(ticker: str, timeframe: str, new_timestamps: list, logger: logging.Logger):
+    """Update indicators for specified timestamps using sufficient historical data."""
+    try:
+        # Convert timeframe to lowercase (except for monthly)
+        timeframe = timeframe.lower() if timeframe != '1M' else timeframe
+        
+        with db_cursor() as cursor:
+            # Get required historical data
+            required_candles = get_required_history(timeframe)
+            
+            logger.debug(f"Fetching {required_candles} candles for indicator calculations")
+            
+            # Ensure timestamps have UTC timezone
+            new_timestamps = [
+                ts.astimezone(timezone.utc) if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
+                for ts in new_timestamps
+            ]
+            
+            newest_timestamp = max(new_timestamps)
+            
+            # Fetch historical data including new timestamps
+            cursor.execute("""
+            WITH ordered_data AS (
+                SELECT 
+                    timestamp AT TIME ZONE 'UTC' as timestamp,
+                    CAST(open AS FLOAT) as open,
+                    CAST(high AS FLOAT) as high,
+                    CAST(low AS FLOAT) as low,
+                    CAST(close AS FLOAT) as close,
+                    CAST(volume AS FLOAT) as volume,
+                    ROW_NUMBER() OVER (ORDER BY timestamp DESC) as rn
+                FROM ohlc_data
+                WHERE ticker = %s 
+                AND timeframe = %s
+                AND timestamp <= %s
+            )
+            SELECT timestamp, open, high, low, close, volume
+            FROM ordered_data
+            WHERE rn <= %s
+            ORDER BY timestamp ASC;
+            """, (ticker, timeframe, newest_timestamp, required_candles))
+            
+            # Create DataFrame with all needed data
+            data = cursor.fetchall()
+            if not data:
+                logger.warning(f"No data found for indicator calculation")
+                return
+                
+            # Use capitalized column names and convert to float
+            df = pd.DataFrame(data, 
+                columns=['timestamp', 'Open', 'High', 'Low', 'Close', 'Volume'])
+            df.set_index('timestamp', inplace=True)
+            
+            logger.debug(f"Calculating indicators with {len(df)} candles of data")
+            
+            try:
+                # Calculate candlestick patterns first
+                patterns_df = add_candlestick_patterns(df)
+                for ts in new_timestamps:
+                    if ts in patterns_df.index:
+                        pattern = patterns_df.loc[ts, 'candle_pattern']
+                        cursor.execute("""
+                        UPDATE ohlc_data 
+                        SET candle_pattern = %s
+                        WHERE ticker = %s 
+                        AND timeframe = %s 
+                        AND timestamp = %s
+                        """, (pattern, ticker, timeframe, ts))
+
+                # Calculate other indicators
+                save_emas(cursor, ticker, timeframe, df, new_timestamps)
+                save_rsi(cursor, ticker, timeframe, df, new_timestamps)
+                save_pivots(cursor, ticker, timeframe, df, new_timestamps)
+                save_chandelier_exit(cursor, ticker, timeframe, df, period=22)
+                save_obv(cursor, ticker, timeframe, df, new_timestamps)
+                
+            except Exception as e:
+                logger.error(f"Error calculating indicators: {str(e)}")
+                raise
+            
+    except Exception as e:
+        logger.error(f"Error updating indicators: {str(e)}")
+        raise
