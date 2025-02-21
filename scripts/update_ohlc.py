@@ -77,6 +77,8 @@ def update_ohlc(start_time=None, end_time=None, tickers=None, timeframes=None):
     Update missing OHLC data for specified tickers and timeframes.
     Only fetches data newer than the last candle in database.
     """
+    logger = logging.getLogger(__name__)
+    
     if end_time is None:
         end_time = datetime.now(timezone.utc)
     if tickers is None:
