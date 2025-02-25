@@ -24,6 +24,47 @@ def parse_date(date_str: str) -> datetime:
     dt = datetime.strptime(date_str, '%Y-%m-%d')
     return dt.replace(tzinfo=timezone.utc)
 
+def fetch_and_save_data(
+    ticker: str,
+    timeframe: str,
+    start_time: datetime,
+    end_time: datetime,
+    logger: logging.Logger
+) -> list:
+    """
+    Fetch and save market data for the specified period.
+    Returns list of timestamps for which data was saved.
+    """
+    try:
+        # Convert timeframe to lowercase (except for monthly)
+        timeframe = timeframe.lower() if timeframe != '1M' else timeframe
+        
+        # Validate inputs
+        if ticker not in TICKERS:
+            raise ValueError(f"Invalid ticker: {ticker}")
+        
+        if timeframe not in TIMEFRAMES.values():
+            raise ValueError(f"Invalid timeframe: {timeframe}")
+            
+        logger.debug(f"Fetching {ticker} {timeframe} data from {start_time} to {end_time}")
+        
+        # Fetch data from Binance
+        data = fetch_ohlc(ticker, timeframe, start_time=start_time, end_time=end_time)
+        if not data:
+            logger.debug("No data returned from Binance")
+            return []
+            
+        # Save to database
+        logger.debug(f"Saving {len(data)} candles to database")
+        save_to_db(data, ticker, timeframe)
+        
+        # Return timestamps of saved data
+        return [datetime.fromtimestamp(candle[0] / 1000, timezone.utc) for candle in data]
+        
+    except Exception as e:
+        logger.error(f"Error fetching/saving market data: {e}")
+        raise
+
 def main():
     parser = argparse.ArgumentParser(description='Fetch historical market data')
     parser.add_argument('--ticker', type=str, default='BTCUSDT', help='Ticker to fetch')
@@ -38,18 +79,6 @@ def main():
     log_level = logging.DEBUG if args.debug else logging.INFO
     logger = setup_logging(level=log_level)
     
-    # Validate inputs
-    if args.ticker not in TICKERS:
-        logger.error(f"Invalid ticker: {args.ticker}")
-        return
-    
-    if args.timeframe not in TIMEFRAMES.values():
-        logger.error(f"Invalid timeframe: {args.timeframe}")
-        return
-    
-    # Convert timeframe to lowercase (except for monthly)
-    timeframe = args.timeframe.lower() if args.timeframe != '1M' else args.timeframe
-    
     # Determine date range
     end_time = parse_date(args.end) if args.end else datetime.now(timezone.utc)
     if args.start:
@@ -57,22 +86,22 @@ def main():
     else:
         start_time = end_time - timedelta(days=args.days)
     
-    logger.info(f"Fetching {args.ticker} {timeframe} data from {start_time} to {end_time}")
-    
     try:
-        # Fetch data from Binance
-        data = fetch_ohlc(args.ticker, timeframe, start_time=start_time, end_time=end_time)
-        if not data:
-            logger.warning("No data returned from Binance")
-            return
+        new_timestamps = fetch_and_save_data(
+            ticker=args.ticker,
+            timeframe=args.timeframe,
+            start_time=start_time,
+            end_time=end_time,
+            logger=logger
+        )
+        if new_timestamps:
+            logger.info(f"Successfully saved {len(new_timestamps)} candles")
+        else:
+            logger.info("No new data to save")
             
-        # Save to database
-        logger.info(f"Saving {len(data)} candles to database")
-        save_to_db(data, args.ticker, timeframe)
-        logger.info("Data saved successfully")
-        
     except Exception as e:
-        logger.error(f"Error fetching/saving market data: {e}")
+        logger.error(f"Error: {e}")
+        exit(1)
 
 if __name__ == "__main__":
     main()

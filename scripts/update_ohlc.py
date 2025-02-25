@@ -21,16 +21,17 @@ Examples:
 
 import argparse
 from datetime import datetime, timezone, timedelta
-from libs.market_data.fetch_ohlc import TICKERS, TIMEFRAMES, fetch_ohlc, update_indicators, save_to_db
+from libs.market_data.fetch_ohlc import TICKERS, TIMEFRAMES, update_indicators
 from libs.market_data.db import db_cursor
 from libs.utils.logging import setup_logging
 import logging
+from .fetch_market_data import fetch_and_save_data
 
 def get_last_candle(ticker: str, timeframe: str) -> datetime:
     """Get the timestamp of the last available candle."""
     with db_cursor() as cursor:
         cursor.execute("""
-        SELECT timestamp 
+        SELECT timestamp AT TIME ZONE 'UTC'  -- Ensure we get UTC timestamp
         FROM ohlc_data 
         WHERE ticker = %s 
         AND timeframe = %s 
@@ -39,96 +40,60 @@ def get_last_candle(ticker: str, timeframe: str) -> datetime:
         """, (ticker, timeframe))
         
         result = cursor.fetchone()
-        return result[0] if result else None
+        if result and result[0]:
+            # Ensure returned timestamp is timezone-aware
+            ts = result[0]
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            return ts
+        return None
 
-def update_ohlc_data(ticker: str, timeframe: str, logger: logging.Logger) -> list:
+def update_ticker_timeframe(
+    ticker: str, 
+    timeframe: str, 
+    skip_indicators: bool,
+    logger: logging.Logger
+) -> list:
     """
-    Update OHLC data for a specific ticker and timeframe.
+    Update OHLC data and indicators for a specific ticker and timeframe.
     Returns list of new timestamps that were added.
     """
     # Get last candle timestamp
     last_timestamp = get_last_candle(ticker, timeframe)
+    end_time = datetime.now(timezone.utc)
     
     if last_timestamp is None:
-        logger.info(f"No data found for {ticker} {timeframe}, fetching all available data")
-        start_time = None
+        logger.info(f"No data found for {ticker} {timeframe}, fetching last 7 days")
+        start_time = end_time - timedelta(days=7)
     else:
         logger.info(f"Last candle for {ticker} {timeframe}: {last_timestamp}")
+        # Ensure last_timestamp is timezone-aware
+        if last_timestamp.tzinfo is None:
+            last_timestamp = last_timestamp.replace(tzinfo=timezone.utc)
         # Start from the last candle to ensure it's updated if incomplete
         start_time = last_timestamp
-    
-    # Fetch and update OHLC data
-    data = fetch_ohlc(
+        
+    if start_time >= end_time:
+        logger.info(f"Data is up to date for {ticker} {timeframe}")
+        return []
+        
+    # Fetch and save new data
+    new_timestamps = fetch_and_save_data(
         ticker=ticker,
-        interval=timeframe,
+        timeframe=timeframe,
         start_time=start_time,
-        end_time=datetime.now(timezone.utc)
+        end_time=end_time,
+        logger=logger
     )
     
-    if data:
-        logger.info(f"Updated {ticker} {timeframe} with {len(data)} candles")
-        return [datetime.fromtimestamp(candle[0] / 1000, timezone.utc) for candle in data]
-    else:
-        logger.info(f"No new data for {ticker} {timeframe}")
-        return []
-
-def update_ohlc(start_time=None, end_time=None, tickers=None, timeframes=None):
-    """
-    Update missing OHLC data for specified tickers and timeframes.
-    Only fetches data newer than the last candle in database.
-    """
-    logger = logging.getLogger(__name__)
-    
-    if end_time is None:
-        end_time = datetime.now(timezone.utc)
-    if tickers is None:
-        tickers = TICKERS
-    if timeframes is None:
-        timeframes = TIMEFRAMES.values()
-    
-    # Create reverse mapping for timeframes
-    timeframe_map = {v: k for k, v in TIMEFRAMES.items()}
-    
-    for ticker in tickers:
-        logger.info(f"Checking updates for {ticker}")
-        for interval in timeframes:
-            timeframe = timeframe_map.get(interval)
-            if timeframe is None:
-                logger.warning(f"Unknown timeframe {interval}, skipping...")
-                continue
-                
-            try:
-                # Get last candle timestamp
-                with db_cursor() as cursor:
-                    cursor.execute("""
-                    SELECT timestamp 
-                    FROM ohlc_data 
-                    WHERE ticker = %s 
-                    AND timeframe = %s 
-                    ORDER BY timestamp DESC 
-                    LIMIT 1
-                    """, (ticker, timeframe))
-                    
-                    result = cursor.fetchone()
-                    if result:
-                        start_time = result[0]
-                        logger.info(f"Last candle for {ticker} {timeframe}: {start_time}")
-                    else:
-                        logger.info(f"No data found for {ticker} {timeframe}, fetching all available data")
-                        start_time = None
-                
-                # Only fetch if we need new data
-                if start_time is None or start_time < end_time:
-                    data = fetch_ohlc(ticker, interval, start_time=start_time, end_time=end_time)
-                    if data:  # Only save if we got data back
-                        logger.info(f"Updated {ticker} {timeframe} with {len(data)} candles")
-                        save_to_db(data, ticker, timeframe)
-                        
-            except Exception as e:
-                logger.error(f"Error processing {ticker} {interval}: {str(e)}")
-                raise
-    
-    logger.info("Data update completed")
+    if new_timestamps and not skip_indicators:
+        try:
+            logger.info(f"Calculating indicators for {ticker} {timeframe}")
+            update_indicators(ticker, timeframe, new_timestamps, logger)
+        except Exception as e:
+            logger.error(f"Error updating indicators for {ticker} {timeframe}: {str(e)}")
+            
+    return new_timestamps
 
 def main():
     parser = argparse.ArgumentParser(description='Update missing OHLC data and indicators')
@@ -150,32 +115,20 @@ def main():
     logger.info(f"Checking tickers: {', '.join(tickers)}")
     logger.info(f"Checking timeframes: {', '.join(timeframes)}")
     
-    # First phase: Update OHLC data
-    updated_data = {}  # Store which timestamps were updated for each ticker/timeframe
-    
     for ticker in tickers:
-        updated_data[ticker] = {}
         for timeframe in timeframes:
             try:
-                new_timestamps = update_ohlc_data(ticker, timeframe, logger)
+                new_timestamps = update_ticker_timeframe(
+                    ticker, 
+                    timeframe, 
+                    args.skip_indicators,
+                    logger
+                )
                 if new_timestamps:
-                    updated_data[ticker][timeframe] = new_timestamps
+                    logger.info(f"Updated {ticker} {timeframe} with {len(new_timestamps)} candles")
             except Exception as e:
-                logger.error(f"Error updating OHLC for {ticker} {timeframe}: {str(e)}")
+                logger.error(f"Error updating {ticker} {timeframe}: {str(e)}")
                 continue
-    
-    # Second phase: Update indicators if needed
-    if not args.skip_indicators and any(updated_data.values()):
-        logger.info("Updating indicators for new data...")
-        for ticker in updated_data:
-            for timeframe, timestamps in updated_data[ticker].items():
-                if timestamps:
-                    try:
-                        logger.info(f"Calculating indicators for {ticker} {timeframe}")
-                        update_indicators(ticker, timeframe, timestamps, logger)
-                    except Exception as e:
-                        logger.error(f"Error updating indicators for {ticker} {timeframe}: {str(e)}")
-                        continue
     
     logger.info("Data update completed")
 

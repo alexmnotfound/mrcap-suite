@@ -7,6 +7,7 @@ import logging
 import numpy as np
 import time
 from libs.market_data.config import APIConfig 
+from typing import List
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +30,7 @@ def get_ticker(cursor, ticker: str):
         # If ticker doesn't exist, create it
         cursor.execute(
             "INSERT INTO tickers (ticker, name) VALUES (%s, %s)",
-            (ticker, ticker)  # Using ticker as name for now
+            (ticker, ticker)  # Using ticker as name for now    
         )
     return ticker
 
@@ -161,21 +162,48 @@ def get_interval_ms(interval: str) -> int:
 
 def save_emas(cursor, ticker: str, timeframe: str, df: pd.DataFrame, save_timestamps: list):
     """Calculate and save EMAs for different periods."""
-    for period in PERIODS:
-        ema_values = add_ema(df['Close'].values, period=period)
-        ema_series = pd.Series(ema_values, index=df.index)
+    try:
+        # First calculate EMAs for all periods
+        ema_dict = {}
+        for period in PERIODS:
+            ema_values = add_ema(df['Close'].values, period=period)
+            ema_series = pd.Series(ema_values, index=df.index)
+            ema_dict[period] = ema_series
         
-        # Only save values for specified timestamps
+        # Log the available timestamp range
+        logger.debug(f"DataFrame index range: {df.index.min()} to {df.index.max()}")
+        logger.debug(f"Number of timestamps to save: {len(save_timestamps)}")
+        
+        # Save values for timestamps that exist in the data
         for timestamp in save_timestamps:
-            if pd.isna(ema_series[timestamp]):
+            # Convert timestamp to pandas Timestamp for consistent comparison
+            ts = pd.Timestamp(timestamp)
+            
+            if ts not in df.index:
+                logger.warning(f"Timestamp {ts} not found in historical data for {ticker} {timeframe}")
                 continue
+            
+            # Save EMAs for all periods
+            for period, ema_series in ema_dict.items():
+                value = ema_series[ts]
+                if pd.isna(value):
+                    logger.debug(f"Skipping NaN EMA value for period {period} at {ts}")
+                    continue
+                    
+                cursor.execute("""
+                INSERT INTO emas (ticker, timeframe, timestamp, period, value)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (ticker, timeframe, timestamp, period) 
+                DO UPDATE SET value = EXCLUDED.value;
+                """, (ticker, timeframe, ts, period, float(value)))
                 
-            cursor.execute("""
-            INSERT INTO emas (ticker, timeframe, timestamp, period, value)
-            VALUES (%s, %s, %s, %s, %s)
-            ON CONFLICT (ticker, timeframe, timestamp, period) 
-            DO UPDATE SET value = EXCLUDED.value;
-            """, (ticker, timeframe, timestamp, period, float(ema_series[timestamp])))
+    except Exception as e:
+        logger.error(f"Error in save_emas for {ticker} {timeframe}")
+        logger.error(f"Error details: {str(e)}")
+        logger.debug(f"Save timestamps: {save_timestamps}")
+        logger.debug(f"DataFrame shape: {df.shape}")
+        logger.debug(f"DataFrame index: {df.index}")
+        raise
 
 def save_rsi(cursor, ticker: str, timeframe: str, df: pd.DataFrame, save_timestamps: list, period: int = 14):
     """Calculate and save RSI values."""
@@ -367,8 +395,21 @@ def save_to_db(data, ticker, timeframe):
                 except Exception as e:
                     logger.error(f"Error saving candle to database: {e}")
                     raise
+
+            # Calculate and save candlestick patterns
+            patterns_df = add_candlestick_patterns(df_ohlc)
+            for ts in timestamps:
+                if ts in patterns_df.index:
+                    pattern = patterns_df.loc[ts, 'candle_pattern']
+                    cursor.execute("""
+                    UPDATE ohlc_data 
+                    SET candle_pattern = %s
+                    WHERE ticker = %s 
+                    AND timeframe = %s 
+                    AND timestamp = %s
+                    """, (pattern, ticker, timeframe, ts))
             
-            # Calculate and save indicators
+            # Calculate and save other indicators
             save_emas(cursor, ticker, timeframe, df_ohlc, timestamps)
             save_rsi(cursor, ticker, timeframe, df_ohlc, timestamps)
             save_pivots(cursor, ticker, timeframe, df_ohlc, timestamps)
@@ -391,13 +432,11 @@ def update_ohlc(start_time=None, end_time=None, tickers=None, timeframes=None):
     """
     if end_time is None:
         end_time = datetime.now(timezone.utc)
-    if start_time is None:
-        start_time = end_time.replace(hour=0, minute=0, second=0, microsecond=0)
     if tickers is None:
         tickers = TICKERS
     if timeframes is None:
         timeframes = TIMEFRAMES.values()
-    
+
     # Create reverse mapping for timeframes
     timeframe_map = {v: k for k, v in TIMEFRAMES.items()}
     
@@ -408,16 +447,73 @@ def update_ohlc(start_time=None, end_time=None, tickers=None, timeframes=None):
             if timeframe is None:
                 logger.warning(f"Unknown timeframe {interval}, skipping...")
                 continue
-                
+            
             try:
+                # Get the last available timestamp for this ticker/timeframe
+                with db_cursor() as cursor:
+                    cursor.execute("""
+                        SELECT MAX(timestamp)
+                        FROM ohlc_data
+                        WHERE ticker = %s AND timeframe = %s
+                    """, (ticker, timeframe))
+                    last_timestamp = cursor.fetchone()[0]
+                
+                if last_timestamp is None:
+                    # If no data exists, start from a reasonable default
+                    if start_time is None:
+                        start_time = end_time - timedelta(days=7)
+                    logger.info(f"No existing data for {ticker} {timeframe}, fetching from {start_time}")
+                else:
+                    # Start from the next interval after the last timestamp
+                    start_time = last_timestamp + get_interval_timedelta(interval)
+                    logger.info(f"Last candle for {ticker} {timeframe}: {last_timestamp}")
+                
+                if start_time >= end_time:
+                    logger.info(f"Data is up to date for {ticker} {timeframe}")
+                    continue
+                
+                # Fetch new data
                 data = fetch_ohlc(ticker, interval, start_time=start_time, end_time=end_time)
                 if data:  # Only save if we got data back
                     save_to_db(data, ticker, timeframe)
+                    
+                    # Get the actual timestamps of the new data
+                    new_timestamps = [
+                        datetime.fromtimestamp(candle[0] / 1000, timezone.utc)
+                        for candle in data
+                    ]
+                    
+                    if new_timestamps:
+                        logger.info(f"Updated {ticker} {timeframe} with {len(new_timestamps)} candles")
+                        logger.info("Updating indicators for new data...")
+                        logger.info(f"Calculating indicators for {ticker} {timeframe}")
+                        
+                        # Update indicators only for timestamps we have data for
+                        update_indicators(ticker, timeframe, new_timestamps, logger)
+                else:
+                    logger.info(f"No new data available for {ticker} {timeframe}")
+                    
             except Exception as e:
-                logger.error(f"Error processing {ticker} {interval}: {str(e)}")
+                logger.error(f"Error processing {ticker} {timeframe}: {str(e)}")
                 raise
     
-    logger.info("Data update completed successfully")
+    logger.info("Data update completed")
+
+def get_interval_timedelta(interval: str) -> timedelta:
+    """Convert interval string to timedelta."""
+    unit = interval[-1].lower()
+    number = int(interval[:-1])
+    
+    if unit == 'm':
+        return timedelta(minutes=number)
+    elif unit == 'h':
+        return timedelta(hours=number)
+    elif unit == 'd':
+        return timedelta(days=number)
+    elif unit == 'w':
+        return timedelta(weeks=number)
+    else:
+        raise ValueError(f"Unsupported interval unit: {unit}")
 
 def get_required_history(timeframe: str) -> int:
     """Calculate required number of candles based on timeframe and longest indicator."""
@@ -429,52 +525,76 @@ def get_required_history(timeframe: str) -> int:
     
     return BASE_CANDLES + BUFFER
 
-def update_indicators(ticker: str, timeframe: str, new_timestamps: list, logger: logging.Logger):
+def align_timestamp(ts: datetime, timeframe: str) -> datetime:
+    """Align timestamp to the start of its candle interval."""
+    ts = ts.replace(microsecond=0, second=0)
+    
+    if timeframe.lower() == '1h':
+        return ts.replace(minute=0)
+    elif timeframe.lower() == '4h':
+        hour = (ts.hour // 4) * 4
+        return ts.replace(minute=0, hour=hour)
+    elif timeframe.lower() == '1d':
+        return ts.replace(hour=0, minute=0)
+    elif timeframe.upper() == '1M':
+        return ts.replace(day=1, hour=0, minute=0)
+    return ts
+
+def update_indicators(
+    ticker: str, 
+    timeframe: str, 
+    new_timestamps: List[datetime], 
+    logger: logging.Logger
+) -> None:
     """Update indicators for specified timestamps using sufficient historical data."""
+    # Input validation
+    if not isinstance(ticker, str) or not ticker:
+        raise ValueError("Invalid ticker")
+    if not isinstance(timeframe, str) or not timeframe:
+        raise ValueError("Invalid timeframe")
+    if not new_timestamps:
+        logger.warning("No timestamps provided for indicator update")
+        return
+        
     try:
-        # Convert timeframe to lowercase (except for monthly)
         timeframe = timeframe.lower() if timeframe != '1M' else timeframe
         
+        # Align timestamps to candle intervals
+        aligned_timestamps = [align_timestamp(ts, timeframe) for ts in new_timestamps]
+        aligned_timestamps = sorted(set(aligned_timestamps))  # Remove duplicates
+        
+        if not aligned_timestamps:
+            logger.info("No timestamps to process")
+            return
+            
         with db_cursor() as cursor:
             # Get required historical data
             required_candles = get_required_history(timeframe)
+            oldest_needed = min(aligned_timestamps) - get_interval_timedelta(timeframe) * required_candles
+            newest_timestamp = max(aligned_timestamps)
             
-            logger.debug(f"Fetching {required_candles} candles for indicator calculations")
-            
-            # Ensure timestamps have UTC timezone
-            new_timestamps = [
-                ts.astimezone(timezone.utc) if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
-                for ts in new_timestamps
-            ]
-            
-            newest_timestamp = max(new_timestamps)
+            logger.debug(f"Fetching data from {oldest_needed} to {newest_timestamp}")
             
             # Fetch historical data including new timestamps
             cursor.execute("""
-            WITH ordered_data AS (
-                SELECT 
-                    timestamp AT TIME ZONE 'UTC' as timestamp,
-                    CAST(open AS FLOAT) as open,
-                    CAST(high AS FLOAT) as high,
-                    CAST(low AS FLOAT) as low,
-                    CAST(close AS FLOAT) as close,
-                    CAST(volume AS FLOAT) as volume,
-                    ROW_NUMBER() OVER (ORDER BY timestamp DESC) as rn
-                FROM ohlc_data
-                WHERE ticker = %s 
-                AND timeframe = %s
-                AND timestamp <= %s
-            )
-            SELECT timestamp, open, high, low, close, volume
-            FROM ordered_data
-            WHERE rn <= %s
+            SELECT 
+                timestamp AT TIME ZONE 'UTC' as timestamp,
+                CAST(open AS FLOAT) as open,
+                CAST(high AS FLOAT) as high,
+                CAST(low AS FLOAT) as low,
+                CAST(close AS FLOAT) as close,
+                CAST(volume AS FLOAT) as volume
+            FROM ohlc_data
+            WHERE ticker = %s 
+            AND timeframe = %s
+            AND timestamp BETWEEN %s AND %s
             ORDER BY timestamp ASC;
-            """, (ticker, timeframe, newest_timestamp, required_candles))
+            """, (ticker, timeframe, oldest_needed, newest_timestamp))
             
             # Create DataFrame with all needed data
             data = cursor.fetchall()
             if not data:
-                logger.warning(f"No data found for indicator calculation")
+                logger.warning(f"No historical data found for {ticker} {timeframe}")
                 return
                 
             # Use capitalized column names and convert to float
@@ -484,10 +604,10 @@ def update_indicators(ticker: str, timeframe: str, new_timestamps: list, logger:
             
             logger.debug(f"Calculating indicators with {len(df)} candles of data")
             
+            # Calculate candlestick patterns first
             try:
-                # Calculate candlestick patterns first
                 patterns_df = add_candlestick_patterns(df)
-                for ts in new_timestamps:
+                for ts in aligned_timestamps:
                     if ts in patterns_df.index:
                         pattern = patterns_df.loc[ts, 'candle_pattern']
                         cursor.execute("""
@@ -497,18 +617,43 @@ def update_indicators(ticker: str, timeframe: str, new_timestamps: list, logger:
                         AND timeframe = %s 
                         AND timestamp = %s
                         """, (pattern, ticker, timeframe, ts))
-
-                # Calculate other indicators
-                save_emas(cursor, ticker, timeframe, df, new_timestamps)
-                save_rsi(cursor, ticker, timeframe, df, new_timestamps)
-                save_pivots(cursor, ticker, timeframe, df, new_timestamps)
-                save_chandelier_exit(cursor, ticker, timeframe, df, period=22)
-                save_obv(cursor, ticker, timeframe, df, new_timestamps)
-                
             except Exception as e:
-                logger.error(f"Error calculating indicators: {str(e)}")
+                logger.error(f"Error calculating candlestick patterns: {str(e)}")
+                raise
+
+            # Calculate other indicators with individual error handling
+            try:
+                save_emas(cursor, ticker, timeframe, df, aligned_timestamps)
+            except Exception as e:
+                logger.error(f"Error calculating EMAs: {str(e)}")
+                raise
+
+            try:
+                save_rsi(cursor, ticker, timeframe, df, aligned_timestamps)
+            except Exception as e:
+                logger.error(f"Error calculating RSI: {str(e)}")
+                raise
+
+            try:
+                save_pivots(cursor, ticker, timeframe, df, aligned_timestamps)
+            except Exception as e:
+                logger.error(f"Error calculating pivots: {str(e)}")
+                raise
+
+            try:
+                save_chandelier_exit(cursor, ticker, timeframe, df, period=22)
+            except Exception as e:
+                logger.error(f"Error calculating Chandelier Exit: {str(e)}")
+                raise
+
+            try:
+                save_obv(cursor, ticker, timeframe, df, aligned_timestamps)
+            except Exception as e:
+                logger.error(f"Error calculating OBV: {str(e)}")
                 raise
             
     except Exception as e:
-        logger.error(f"Error updating indicators: {str(e)}")
+        logger.error(f"Failed to update indicators for {ticker} {timeframe}")
+        logger.error(f"Error details: {str(e)}")
+        logger.exception("Full traceback:")
         raise
