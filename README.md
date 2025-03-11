@@ -1,4 +1,4 @@
-# MrCap Suite
+# MRCap Suite
 A comprehensive market data and technical analysis toolkit for cryptocurrency trading.
 
 ## 🚧 Work in Progress
