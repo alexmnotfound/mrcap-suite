@@ -3,8 +3,8 @@ Script to fetch historical market data and save to database.
 Run with: python -m scripts.fetch_market_data [options]
 
 Examples:
-    # Fetch last 7 days of data
-    python -m scripts.fetch_market_data
+    # Initialize database and fetch last 7 days of data
+    python -m scripts.fetch_market_data --init-db
 
     # Fetch specific date range
     python -m scripts.fetch_market_data --start 2025-02-01 --end 2025-02-21
@@ -15,14 +15,42 @@ Examples:
 
 import argparse
 from datetime import datetime, timezone, timedelta
-from libs.market_data.fetch_ohlc import TICKERS, TIMEFRAMES, fetch_ohlc, save_to_db
+from libs.market_data.fetch_ohlc import (
+    TICKERS, TIMEFRAMES, fetch_ohlc, save_to_db, update_indicators
+)
+from libs.market_data.init_db import init_db
 from libs.utils.logging import setup_logging
 import logging
+import pandas as pd
 
 def parse_date(date_str: str) -> datetime:
     """Parse date string to datetime."""
     dt = datetime.strptime(date_str, '%Y-%m-%d')
     return dt.replace(tzinfo=timezone.utc)
+
+def get_required_history_length(timeframe: str) -> int:
+    """Get the number of historical candles needed for indicator calculations."""
+    BASE_REQUIREMENT = 200  # Longest EMA period
+    BUFFER = 50  # Extra candles for safety
+    return BASE_REQUIREMENT + BUFFER
+
+def get_interval_timedelta(interval: str) -> timedelta:
+    """Convert interval string to timedelta."""
+    unit = interval[-1].lower()
+    number = int(interval[:-1])
+    
+    if unit == 'm':
+        return timedelta(minutes=number)
+    elif unit == 'h':
+        return timedelta(hours=number)
+    elif unit == 'd':
+        return timedelta(days=number)
+    elif unit == 'w':
+        return timedelta(weeks=number)
+    elif unit == 'M':
+        return timedelta(days=30 * number)  # Approximate
+    else:
+        raise ValueError(f"Unsupported interval unit: {unit}")
 
 def fetch_and_save_data(
     ticker: str,
@@ -48,56 +76,105 @@ def fetch_and_save_data(
             
         logger.debug(f"Fetching {ticker} {timeframe} data from {start_time} to {end_time}")
         
-        # Fetch data from Binance
-        data = fetch_ohlc(ticker, timeframe, start_time=start_time, end_time=end_time)
+        # Calculate start time for historical data needed for indicators
+        required_candles = get_required_history_length(timeframe)
+        historical_start = start_time - get_interval_timedelta(timeframe) * required_candles
+        
+        # Fetch data including historical data needed for indicators
+        data = fetch_ohlc(ticker, timeframe, start_time=historical_start, end_time=end_time)
         if not data:
             logger.debug("No data returned from Binance")
             return []
             
-        # Save to database
+        # Convert data to DataFrame for indicator calculations
+        df_data = []
+        timestamps = []
+        for candle in data:
+            ts = datetime.fromtimestamp(candle[0] / 1000, timezone.utc)
+            if ts >= start_time:  # Only include requested timestamps
+                timestamps.append(ts)
+            df_data.append({
+                'timestamp': ts,
+                'Open': float(candle[1]),
+                'High': float(candle[2]),
+                'Low': float(candle[3]),
+                'Close': float(candle[4]),
+                'Volume': float(candle[5])
+            })
+        
+        df = pd.DataFrame(df_data)
+        df.set_index('timestamp', inplace=True)
+        
+        # Save OHLC data
         logger.debug(f"Saving {len(data)} candles to database")
         save_to_db(data, ticker, timeframe)
         
-        # Return timestamps of saved data
-        return [datetime.fromtimestamp(candle[0] / 1000, timezone.utc) for candle in data]
+        if timestamps:
+            # Update indicators using the full dataset
+            logger.debug(f"Calculating indicators with {len(df)} candles of data")
+            update_indicators(ticker, timeframe, timestamps, logger, df)
+            
+        return timestamps
         
     except Exception as e:
         logger.error(f"Error fetching/saving market data: {e}")
         raise
 
+def parse_args():
+    parser = argparse.ArgumentParser(description='Fetch and store market data')
+    parser.add_argument('--ticker', type=str, default=None,
+                       help='Ticker symbol (default: all configured tickers)')
+    parser.add_argument('--timeframe', type=str, default=None,
+                       help='Timeframe (default: all configured timeframes)')
+    parser.add_argument('--start', type=str,
+                       help='Start date (YYYY-MM-DD)')
+    parser.add_argument('--end', type=str,
+                       help='End date (YYYY-MM-DD)')
+    parser.add_argument('--days', type=int, default=7,
+                       help='Number of days to fetch (default: 7)')
+    parser.add_argument('--debug', action='store_true',
+                       help='Enable debug logging')
+    parser.add_argument('--init-db', action='store_true',
+                       help='Initialize database before fetching data')
+    return parser.parse_args()
+
 def main():
-    parser = argparse.ArgumentParser(description='Fetch historical market data')
-    parser.add_argument('--ticker', type=str, default='BTCUSDT', help='Ticker to fetch')
-    parser.add_argument('--timeframe', type=str, default='1h', help='Timeframe to fetch')
-    parser.add_argument('--start', type=str, help='Start date (YYYY-MM-DD)')
-    parser.add_argument('--end', type=str, help='End date (YYYY-MM-DD)')
-    parser.add_argument('--days', type=int, default=7, help='Days to look back')
-    parser.add_argument('--debug', action='store_true', help='Enable debug logging')
-    args = parser.parse_args()
+    args = parse_args()
     
     # Setup logging
     log_level = logging.DEBUG if args.debug else logging.INFO
     logger = setup_logging(level=log_level)
     
-    # Determine date range
-    end_time = parse_date(args.end) if args.end else datetime.now(timezone.utc)
-    if args.start:
-        start_time = parse_date(args.start)
-    else:
-        start_time = end_time - timedelta(days=args.days)
-    
     try:
-        new_timestamps = fetch_and_save_data(
-            ticker=args.ticker,
-            timeframe=args.timeframe,
-            start_time=start_time,
-            end_time=end_time,
-            logger=logger
-        )
-        if new_timestamps:
-            logger.info(f"Successfully saved {len(new_timestamps)} candles")
+        # Initialize database if requested
+        if args.init_db:
+            logger.info("Initializing database...")
+            init_db()
+            logger.info("Database initialization complete")
+        
+        # Determine date range
+        end_time = parse_date(args.end) if args.end else datetime.now(timezone.utc)
+        if args.start:
+            start_time = parse_date(args.start)
         else:
-            logger.info("No new data to save")
+            start_time = end_time - timedelta(days=args.days)
+        
+        # If no timeframe specified, fetch all timeframes
+        timeframes = [args.timeframe] if args.timeframe else list(TIMEFRAMES.values())
+        
+        for timeframe in timeframes:
+            logger.info(f"Fetching {args.ticker} {timeframe} data...")
+            new_timestamps = fetch_and_save_data(
+                ticker=args.ticker,
+                timeframe=timeframe,
+                start_time=start_time,
+                end_time=end_time,
+                logger=logger
+            )
+            if new_timestamps:
+                logger.info(f"Successfully saved {len(new_timestamps)} candles for {timeframe}")
+            else:
+                logger.info(f"No new data to save for {timeframe}")
             
     except Exception as e:
         logger.error(f"Error: {e}")

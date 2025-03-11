@@ -127,6 +127,24 @@ def create_tables():
         ADD COLUMN IF NOT EXISTS candle_pattern TEXT;
         """)
 
+        # Add additional performance indexes
+        cursor.execute("""
+        -- Partial index for recent data lookups
+        CREATE INDEX IF NOT EXISTS idx_ohlc_recent 
+        ON ohlc_data (ticker, timeframe, timestamp DESC)
+        WHERE timestamp > NOW() - INTERVAL '30 days';
+        
+        -- Index for time-based range queries
+        CREATE INDEX IF NOT EXISTS idx_ohlc_ticker_time 
+        ON ohlc_data (ticker, timestamp)
+        INCLUDE (timeframe);
+        
+        -- Partial index for RSI calculations
+        CREATE INDEX IF NOT EXISTS idx_ohlc_close_recent
+        ON ohlc_data (ticker, timeframe, close)
+        WHERE timestamp > NOW() - INTERVAL '30 days';
+        """)
+
 def truncate_tables():
     """Truncate all tables in the database."""
     with db_cursor() as cursor:

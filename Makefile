@@ -11,13 +11,13 @@ FETCH_LAST = scripts.fetch_last_candle
 FETCH_MARKET = scripts.fetch_market_data
 
 # Default timeframes and tickers
-TIMEFRAME ?= 1h
+#TIMEFRAME ?= 1h
 TICKER ?= BTCUSDT
-DAYS ?= 7
-DEBUG ?= 0
+#DAYS ?= 7
+DEBUG ?= FALSE
 
 # Convert DEBUG flag to script argument
-DEBUG_ARG = $(if $(filter 1 TRUE true,$(DEBUG)),--debug,)
+DEBUG_ARG = $(if $(filter TRUE true,$(DEBUG)),--debug,)
 
 .PHONY: venv install update update-btc update-eth fetch find show last help clean
 
@@ -39,7 +39,7 @@ help:
 	@echo "  PATTERN=Hammer    - Pattern to search for"
 	@echo "  RSI_MIN=30       - Minimum RSI value"
 	@echo "  RSI_MAX=70       - Maximum RSI value"
-	@echo "  DEBUG=1          - Enable debug logging"
+	@echo "  DEBUG=TRUE       - Enable debug logging"
 
 	@echo ""
 	@echo "Examples:"
@@ -48,7 +48,7 @@ help:
 	@echo "  make find PATTERN=Doji RSI_MIN=65   - Find patterns"
 	@echo "  make show TICKER=BTCUSDT DAYS=30    - Show market data"
 	@echo "  make last TICKER=BTCUSDT            - Show last candle"
-	@echo "  make update DEBUG=1                 - Update with debug logging enabled"
+	@echo "  make update DEBUG=TRUE              - Update with debug logging enabled"
 
 venv:
 	python -m venv $(VENV)

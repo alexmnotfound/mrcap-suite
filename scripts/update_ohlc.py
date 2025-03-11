@@ -26,6 +26,7 @@ from libs.market_data.db import db_cursor
 from libs.utils.logging import setup_logging
 import logging
 from .fetch_market_data import fetch_and_save_data
+import pandas as pd
 
 def get_last_candle(ticker: str, timeframe: str) -> datetime:
     """Get the timestamp of the last available candle."""
@@ -47,6 +48,24 @@ def get_last_candle(ticker: str, timeframe: str) -> datetime:
                 ts = ts.replace(tzinfo=timezone.utc)
             return ts
         return None
+
+def get_required_history_length(timeframe: str) -> int:
+    """
+    Get the number of historical candles needed for indicator calculations.
+    This should be the maximum lookback period needed by any indicator.
+    """
+    # Base requirements for different indicators:
+    # - EMA200: 200 periods
+    # - RSI: 14 periods
+    # - Chandelier Exit: 22 periods
+    # - Pivots: 2 periods before and after
+    # - OBV: No specific requirement, but uses moving averages
+    
+    # Add some buffer to ensure enough data
+    BASE_REQUIREMENT = 200  # Longest EMA period
+    BUFFER = 50  # Extra candles for safety
+    
+    return BASE_REQUIREMENT + BUFFER
 
 def update_ticker_timeframe(
     ticker: str, 
@@ -76,8 +95,8 @@ def update_ticker_timeframe(
     if start_time >= end_time:
         logger.info(f"Data is up to date for {ticker} {timeframe}")
         return []
-        
-    # Fetch and save new data
+    
+    # Fetch only new data
     new_timestamps = fetch_and_save_data(
         ticker=ticker,
         timeframe=timeframe,
@@ -89,11 +108,65 @@ def update_ticker_timeframe(
     if new_timestamps and not skip_indicators:
         try:
             logger.info(f"Calculating indicators for {ticker} {timeframe}")
-            update_indicators(ticker, timeframe, new_timestamps, logger)
+            
+            # Get required historical data from database
+            required_candles = get_required_history_length(timeframe)
+            historical_start = min(new_timestamps) - get_interval_timedelta(timeframe) * required_candles
+            
+            with db_cursor() as cursor:
+                # Fetch all needed data from database
+                cursor.execute("""
+                SELECT 
+                    timestamp AT TIME ZONE 'UTC' as timestamp,
+                    CAST(open AS FLOAT) as open,
+                    CAST(high AS FLOAT) as high,
+                    CAST(low AS FLOAT) as low,
+                    CAST(close AS FLOAT) as close,
+                    CAST(volume AS FLOAT) as volume
+                FROM ohlc_data 
+                WHERE ticker = %s 
+                AND timeframe = %s
+                AND timestamp BETWEEN %s AND %s
+                ORDER BY timestamp ASC
+                """, (ticker, timeframe, historical_start, max(new_timestamps)))
+                
+                data = cursor.fetchall()
+                if not data:
+                    logger.error("No historical data found for indicator calculation")
+                    return new_timestamps
+                
+                # Create DataFrame with all needed data
+                df = pd.DataFrame(data, 
+                    columns=['timestamp', 'Open', 'High', 'Low', 'Close', 'Volume'])
+                df.set_index('timestamp', inplace=True)
+                
+                logger.debug(f"Calculating indicators with {len(df)} candles of data")
+                
+                # Update indicators only for new timestamps
+                update_indicators(ticker, timeframe, new_timestamps, logger, df)
+                
         except Exception as e:
             logger.error(f"Error updating indicators for {ticker} {timeframe}: {str(e)}")
             
     return new_timestamps
+
+def get_interval_timedelta(interval: str) -> timedelta:
+    """Convert interval string to timedelta."""
+    unit = interval[-1].lower()
+    number = int(interval[:-1])
+    
+    if unit == 'm':
+        return timedelta(minutes=number)
+    elif unit == 'h':
+        return timedelta(hours=number)
+    elif unit == 'd':
+        return timedelta(days=number)
+    elif unit == 'w':
+        return timedelta(weeks=number)
+    elif unit == 'M':
+        return timedelta(days=30 * number)  # Approximate
+    else:
+        raise ValueError(f"Unsupported interval unit: {unit}")
 
 def main():
     parser = argparse.ArgumentParser(description='Update missing OHLC data and indicators')
