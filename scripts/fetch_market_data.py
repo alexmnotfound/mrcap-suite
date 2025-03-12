@@ -11,6 +11,54 @@ Examples:
 
     # Fetch specific ticker and timeframe
     python -m scripts.fetch_market_data --ticker BTCUSDT --timeframe 1h --days 7
+
+    # Fetch all tickers with debug info
+    python -m scripts.fetch_market_data --days 30 --debug
+
+Available Tickers:
+    - BTCUSDT
+    - ETHUSDT
+    - BNBUSDT
+    (and other major cryptocurrency pairs)
+
+Available Timeframes:
+    - 1H  (1 hour candles)
+    - 4H  (4 hour candles)
+    - 1D  (daily candles)
+
+Options:
+    --ticker     Trading pair to fetch (default: all configured tickers)
+    --timeframe  Candle timeframe (default: all configured timeframes)
+    --start      Start date (YYYY-MM-DD)
+    --end        End date (YYYY-MM-DD)
+    --days       Number of days to fetch (default: 7)
+    --init-db    Initialize database before fetching
+    --debug      Enable debug logging
+
+Fetching Process:
+    1. Database Initialization (if --init-db):
+       - Creates required tables if they don't exist
+       - Sets up indexes for optimal query performance
+    
+    2. Data Collection:
+       - Fetches OHLCV data from Binance API
+       - Includes extra historical data for indicator calculations
+       - Validates and processes timestamps
+       - Handles rate limiting automatically
+    
+    3. Data Storage:
+       - Saves raw candle data to database
+       - Updates technical indicators
+       - Calculates candlestick patterns
+    
+    4. Historical Requirements:
+       - Base requirement: 200 candles for indicators
+       - Additional buffer: 50 candles
+       - Automatically fetches required historical data
+
+Note: This script requires an active internet connection and
+      access to the Binance API. Some requests may take time
+      due to API rate limits and data volume.
 """
 
 import argparse

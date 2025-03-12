@@ -1,22 +1,22 @@
 """
-Script to find market data matching specific conditions.
-Run with: python -m scripts.find_by_conditions [options]
+Script to get market data matching specific conditions.
+Run with: python -m scripts.get_by_conditions [options]
 
 Examples:
-    # Find all Doji patterns in the last 7 days
-    python -m scripts.find_by_conditions --pattern 'Doji' --days 7
+    # Get all Doji patterns in the last 7 days
+    python -m scripts.get_by_conditions --pattern 'Doji' --days 7
 
-    # Find Hammer patterns with RSI conditions
-    python -m scripts.find_by_conditions --pattern 'Hammer' --rsi-min 30 --rsi-max 70
+    # Get Hammer patterns with RSI conditions
+    python -m scripts.get_by_conditions --pattern 'Hammer' --rsi-min 30 --rsi-max 70
 
-    # Find patterns in a specific date range
-    python -m scripts.find_by_conditions --pattern 'Shooting Star' --start 2024-01-01 --end 2024-01-31
+    # Get patterns in a specific date range
+    python -m scripts.get_by_conditions --pattern 'Shooting Star' --start 2024-01-01 --end 2024-01-31
 
-    # Find patterns with minimum volume
-    python -m scripts.find_by_conditions --pattern 'Bullish Marubozu' --volume-min 1000
+    # Get patterns with minimum volume
+    python -m scripts.get_by_conditions --pattern 'Bullish Marubozu' --volume-min 1000
 
-    # Find patterns for a specific timeframe
-    python -m scripts.find_by_conditions --pattern 'Doji' --timeframe '4H'
+    # Get patterns for a specific timeframe
+    python -m scripts.get_by_conditions --pattern 'Doji' --timeframe '4H'
 
 Available Patterns:
     - Doji
@@ -40,13 +40,13 @@ Conditions:
 import argparse
 from datetime import datetime, timedelta
 import pandas as pd
-from libs.market_data.fetch_data import fetch_market_data
+from libs.market_data.get_data import get_market_data
 from libs.utils.logging import setup_logging
 import logging
 
-def find_patterns(df: pd.DataFrame, pattern_type: str = None, rsi_min: float = None, 
+def get_patterns(df: pd.DataFrame, pattern_type: str = None, rsi_min: float = None, 
                  rsi_max: float = None, volume_min: float = None) -> pd.DataFrame:
-    """Find candlestick patterns in the data."""
+    """Get candlestick patterns in the data."""
     # Filter by pattern type if specified
     if pattern_type:
         matches = df[df['candle_pattern'] == pattern_type].copy()
@@ -103,7 +103,7 @@ def print_pattern_match(timestamp, row):
             print(f"  EMA-{period}: {format_value(row[col])}")
 
 def main():
-    parser = argparse.ArgumentParser(description='Find candlestick patterns with conditions')
+    parser = argparse.ArgumentParser(description='Get candlestick patterns with conditions')
     parser.add_argument('--pattern', type=str, help='Candlestick pattern to search for')
     parser.add_argument('--ticker', type=str, default='BTCUSDT', help='Trading pair')
     parser.add_argument('--timeframe', type=str, default='1H', help='Timeframe')
@@ -134,7 +134,7 @@ def main():
         else:
             start_time = end_time - timedelta(days=args.days)
         
-        df = fetch_market_data(
+        df = get_market_data(
             ticker=args.ticker,
             timeframe=args.timeframe,
             start_time=start_time,
@@ -142,8 +142,8 @@ def main():
             include_indicators=True
         )
         
-        # Find patterns with filters
-        matches = find_patterns(
+        # Get patterns with filters
+        matches = get_patterns(
             df, 
             pattern_type=args.pattern,
             rsi_min=args.rsi_min,
@@ -178,7 +178,7 @@ def main():
             print(f"  Range:   {format_value(matches['volume'].min())} - {format_value(matches['volume'].max())}")
         
     except Exception as e:
-        logger.error(f"Error finding patterns: {str(e)}")
+        logger.error(f"Error getting candlestick patterns: {str(e)}")
         raise
 
 if __name__ == "__main__":

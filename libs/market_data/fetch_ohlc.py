@@ -38,7 +38,7 @@ def get_ticker(cursor, ticker: str):
         logger.error(f"Error getting/creating ticker {ticker}: {str(e)}")
         raise
 
-def fetch_ohlc(ticker: str, interval: str, start_time: datetime = None, end_time: datetime = None):
+def fetch_binance_ohlc(ticker: str, interval: str, start_time: datetime = None, end_time: datetime = None):
     """
     Fetch OHLC data from Binance API.
     
@@ -174,7 +174,11 @@ def save_to_db(data: list, ticker: str, timeframe: str):
             raise ValueError(f"Invalid timeframe: {timeframe}")
             
         # Convert timeframe to standard format
-        timeframe = timeframe.lower() if timeframe != '1M' else timeframe
+        timeframe = timeframe.upper() if timeframe != '1M' else timeframe
+        
+        # Ensure ticker exists in database
+        with db_cursor() as cursor:
+            get_ticker(cursor, ticker)
         
         # Prepare OHLC data for batch insert
         ohlc_values = []
@@ -201,15 +205,7 @@ def save_to_db(data: list, ticker: str, timeframe: str):
             table='ohlc_data',
             columns=['ticker', 'timeframe', 'timestamp', 'open', 'high', 'low', 'close', 'volume'],
             values=ohlc_values,
-            conflict_action="""
-            ON CONFLICT (ticker, timeframe, timestamp) 
-            DO UPDATE SET 
-                open = EXCLUDED.open,
-                high = EXCLUDED.high,
-                low = EXCLUDED.low,
-                close = EXCLUDED.close,
-                volume = EXCLUDED.volume
-            """
+            conflict_action="(ticker, timeframe, timestamp) DO UPDATE SET open = EXCLUDED.open, high = EXCLUDED.high, low = EXCLUDED.low, close = EXCLUDED.close, volume = EXCLUDED.volume"
         )
         
         # Calculate and batch save candlestick patterns
@@ -239,10 +235,7 @@ def save_ema_batch(ticker: str, timeframe: str, ema_data: List[tuple]):
             table='emas',
             columns=['ticker', 'timeframe', 'timestamp', 'period', 'value'],
             values=ema_data,
-            conflict_action="""
-            ON CONFLICT (ticker, timeframe, timestamp, period) 
-            DO UPDATE SET value = EXCLUDED.value
-            """
+            conflict_action="(ticker, timeframe, timestamp, period) DO UPDATE SET value = EXCLUDED.value"
         )
         logger.debug(f"Saved {len(ema_data)} EMA values")
     except Exception as e:
@@ -256,13 +249,7 @@ def save_rsi_batch(ticker: str, timeframe: str, rsi_data: List[tuple]):
             table='rsi',
             columns=['ticker', 'timeframe', 'timestamp', 'period', 'value', 'slope', 'divergence'],
             values=rsi_data,
-            conflict_action="""
-            ON CONFLICT (ticker, timeframe, timestamp, period) 
-            DO UPDATE SET 
-                value = EXCLUDED.value,
-                slope = EXCLUDED.slope,
-                divergence = EXCLUDED.divergence
-            """
+            conflict_action="(ticker, timeframe, timestamp, period) DO UPDATE SET value = EXCLUDED.value, slope = EXCLUDED.slope, divergence = EXCLUDED.divergence"
         )
         logger.debug(f"Saved {len(rsi_data)} RSI values")
     except Exception as e:
@@ -276,10 +263,7 @@ def save_pivots_batch(ticker: str, timeframe: str, pivot_data: List[tuple]):
             table='pivots',
             columns=['ticker', 'timeframe', 'timestamp', 'level', 'value'],
             values=pivot_data,
-            conflict_action="""
-            ON CONFLICT (ticker, timeframe, timestamp, level) 
-            DO UPDATE SET value = EXCLUDED.value    
-            """
+            conflict_action="(ticker, timeframe, timestamp, level) DO UPDATE SET value = EXCLUDED.value"
         )
         logger.debug(f"Saved {len(pivot_data)} pivot points")
     except Exception as e:
@@ -294,14 +278,7 @@ def save_chandelier_batch(ticker: str, timeframe: str, ce_data: List[tuple]):
             columns=['ticker', 'timeframe', 'timestamp', 'period', 'multiplier',
                     'long_stop', 'short_stop', 'direction', 'signal'],
             values=ce_data,
-            conflict_action="""
-            ON CONFLICT (ticker, timeframe, timestamp, period, multiplier) 
-            DO UPDATE SET 
-                long_stop = EXCLUDED.long_stop,
-                short_stop = EXCLUDED.short_stop,
-                direction = EXCLUDED.direction,
-                signal = EXCLUDED.signal
-            """
+            conflict_action="(ticker, timeframe, timestamp, period, multiplier) DO UPDATE SET long_stop = EXCLUDED.long_stop, short_stop = EXCLUDED.short_stop, direction = EXCLUDED.direction, signal = EXCLUDED.signal"
         )
         logger.debug(f"Saved {len(ce_data)} Chandelier Exit values")
     except Exception as e:
@@ -316,14 +293,7 @@ def save_obv_batch(ticker: str, timeframe: str, obv_data: List[tuple]):
             columns=['ticker', 'timeframe', 'timestamp', 'value', 
                     'ma_value', 'bb_upper', 'bb_lower'],
             values=obv_data,
-            conflict_action="""
-            ON CONFLICT (ticker, timeframe, timestamp) 
-            DO UPDATE SET 
-                value = EXCLUDED.value,
-                ma_value = EXCLUDED.ma_value,
-                bb_upper = EXCLUDED.bb_upper,
-                bb_lower = EXCLUDED.bb_lower
-            """
+            conflict_action="(ticker, timeframe, timestamp) DO UPDATE SET value = EXCLUDED.value, ma_value = EXCLUDED.ma_value, bb_upper = EXCLUDED.bb_upper, bb_lower = EXCLUDED.bb_lower"
         )
         logger.debug(f"Saved {len(obv_data)} OBV values")
     except Exception as e:
@@ -333,15 +303,13 @@ def save_obv_batch(ticker: str, timeframe: str, obv_data: List[tuple]):
 def save_patterns_batch(ticker: str, timeframe: str, pattern_data: List[tuple]):
     """Batch save candlestick patterns."""
     try:
-        batch_insert(
-            table='ohlc_data',
-            columns=['ticker', 'timeframe', 'timestamp', 'candle_pattern'],
-            values=pattern_data,
-            conflict_action="""
-            ON CONFLICT (ticker, timeframe, timestamp) 
-            DO UPDATE SET candle_pattern = EXCLUDED.candle_pattern
-            """
-        )
+        with db_cursor() as cursor:
+            for ticker, timeframe, timestamp, pattern in pattern_data:
+                cursor.execute("""
+                UPDATE ohlc_data 
+                SET candle_pattern = %s
+                WHERE ticker = %s AND timeframe = %s AND timestamp = %s
+                """, (pattern, ticker, timeframe, timestamp))
         logger.debug(f"Saved {len(pattern_data)} candlestick patterns")
     except Exception as e:
         logger.error(f"Error saving candlestick patterns: {str(e)}")
@@ -484,7 +452,7 @@ def update_ohlc(ticker: str = None, timeframe: str = None, days: int = 7) -> Non
                         
                         # Fetch and save OHLC data
                         logger.debug(f"Fetching {ticker} {tf} data from {start_time} to {end_time}")
-                        candles = fetch_ohlc(ticker, tf, start_time, end_time)
+                        candles = fetch_binance_ohlc(ticker, tf, start_time, end_time)
                         
                         if candles:
                             # Save OHLC data and get timestamps for indicator updates
@@ -493,7 +461,7 @@ def update_ohlc(ticker: str = None, timeframe: str = None, days: int = 7) -> Non
                             if timestamps:
                                 # Get enough historical data for indicator calculations
                                 history_start = min(timestamps) - timedelta(days=30)  # Get extra history for accuracy
-                                historical_data = fetch_ohlc(ticker, tf, history_start, end_time)
+                                historical_data = fetch_binance_ohlc(ticker, tf, history_start, end_time)
                                 
                                 if historical_data:
                                     # Convert to DataFrame for indicator calculations

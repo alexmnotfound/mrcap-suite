@@ -129,20 +129,18 @@ def create_tables():
 
         # Add additional performance indexes
         cursor.execute("""
-        -- Partial index for recent data lookups
+        -- Index for recent data lookups (DESC order for latest data first)
         CREATE INDEX IF NOT EXISTS idx_ohlc_recent 
-        ON ohlc_data (ticker, timeframe, timestamp DESC)
-        WHERE timestamp > NOW() - INTERVAL '30 days';
+        ON ohlc_data (ticker, timeframe, timestamp DESC);
         
         -- Index for time-based range queries
         CREATE INDEX IF NOT EXISTS idx_ohlc_ticker_time 
         ON ohlc_data (ticker, timestamp)
         INCLUDE (timeframe);
         
-        -- Partial index for RSI calculations
-        CREATE INDEX IF NOT EXISTS idx_ohlc_close_recent
-        ON ohlc_data (ticker, timeframe, close)
-        WHERE timestamp > NOW() - INTERVAL '30 days';
+        -- Index for price queries
+        CREATE INDEX IF NOT EXISTS idx_ohlc_close
+        ON ohlc_data (ticker, timeframe, close);
         """)
 
 def truncate_tables():

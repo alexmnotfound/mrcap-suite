@@ -15,8 +15,43 @@ Examples:
     # Only update OHLC data (skip indicators)
     python -m scripts.update_ohlc --skip-indicators
 
-    # Debug mode 
+    # Debug mode for detailed logging
     python -m scripts.update_ohlc --debug
+
+Available Tickers:
+    - BTCUSDT
+    - ETHUSDT
+    - BNBUSDT
+    (and other major cryptocurrency pairs)
+
+Available Timeframes:
+    - 1H  (1 hour candles)
+    - 4H  (4 hour candles)
+    - 1D  (daily candles)
+
+Options:
+    --ticker           Trading pair to update (default: all tickers)
+    --timeframe       Candle timeframe to update (default: all timeframes)
+    --skip-indicators Skip indicator calculations (faster)
+    --debug           Enable debug logging
+
+Update Process:
+    1. For each ticker/timeframe combination:
+       - Checks last available candle in database
+       - If no data exists, fetches last 7 days
+       - If data exists, fetches only missing candles
+    
+    2. Indicator Updates (unless --skip-indicators):
+       - EMAs (multiple periods)
+       - RSI with slope
+       - Chandelier Exit
+       - Pivot Points
+       - On Balance Volume (OBV)
+       
+    3. Historical Requirements:
+       - Fetches extra historical candles for accurate indicator calculation
+       - Base requirement: 200 candles
+       - Additional buffer: 50 candles
 """
 
 import argparse

@@ -2,7 +2,7 @@ from datetime import datetime, timedelta
 import pandas as pd
 from .db import db_cursor
 
-def fetch_market_data(
+def get_market_data(
     ticker: str,
     timeframe: str,
     start_time: datetime = None,
@@ -10,7 +10,7 @@ def fetch_market_data(
     include_indicators: bool = True
 ) -> pd.DataFrame:
     """
-    Fetch market data with indicators from database.
+    Get market data with indicators from database.
     
     Args:
         ticker: Trading pair symbol (e.g., 'BTCUSDT')
@@ -34,7 +34,7 @@ def fetch_market_data(
         raise ValueError(f"Invalid timeframe: {timeframe}. Must be one of: 1H, 4H, 1D")
     
     with db_cursor() as cursor:
-        # Fetch OHLC data
+        # Get OHLC data
         cursor.execute("""
         SELECT timestamp, open, high, low, close, volume, candle_pattern
         FROM ohlc_data
@@ -53,7 +53,7 @@ def fetch_market_data(
         df.set_index('timestamp', inplace=True)
         
         if include_indicators:
-            # Fetch EMAs
+            # Get EMAs
             cursor.execute("""
             SELECT timestamp, period, value
             FROM emas
@@ -66,7 +66,7 @@ def fetch_market_data(
             for timestamp, period, value in cursor.fetchall():
                 df.loc[timestamp, f'ema_{period}'] = value
             
-            # Fetch RSI
+            # Get RSI
             cursor.execute("""
             SELECT timestamp, value, slope, divergence
             FROM rsi
@@ -81,7 +81,7 @@ def fetch_market_data(
                 df.loc[timestamp, 'rsi_slope'] = slope
                 df.loc[timestamp, 'rsi_div'] = div
             
-            # Fetch monthly pivots - get previous month's data for current month's pivots
+            # Get monthly pivots - get previous month's data for current month's pivots
             cursor.execute("""
             WITH monthly_data AS (
                 SELECT timestamp, level, value,
@@ -104,7 +104,7 @@ def fetch_market_data(
                 if value is not None:
                     df.loc[timestamp, f'M_{level}'] = value
             
-            # Fetch Chandelier Exit
+            # Get Chandelier Exit
             cursor.execute("""
             SELECT timestamp, long_stop, short_stop, direction, signal
             FROM chandelier_exit
@@ -120,7 +120,7 @@ def fetch_market_data(
                 df.loc[timestamp, 'ce_direction'] = direction
                 df.loc[timestamp, 'ce_signal'] = signal
             
-            # Fetch OBV
+            # Get OBV
             cursor.execute("""
             SELECT timestamp, value, ma_value, bb_upper, bb_lower
             FROM obv

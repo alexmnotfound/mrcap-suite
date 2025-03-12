@@ -1,16 +1,47 @@
 """
 Script to fetch the last available candle for a ticker/timeframe.
-Run with: python -m scripts.fetch_last_candle [options]
+Run with: python -m scripts.get_last_candle [options]
 
 Examples:
     # Show last candle for default ticker/timeframe
-    python -m scripts.fetch_last_candle
+    python -m scripts.get_last_candle
 
     # Show last candle for specific ticker
-    python -m scripts.fetch_last_candle --ticker BTCUSDT
+    python -m scripts.get_last_candle --ticker BTCUSDT
 
     # Show last candle for specific timeframe
-    python -m scripts.fetch_last_candle --timeframe 1H
+    python -m scripts.get_last_candle --timeframe 1H
+
+    # Show last candle with debug info
+    python -m scripts.get_last_candle --debug
+
+Available Tickers:
+    - BTCUSDT
+    - ETHUSDT
+    - BNBUSDT
+    (and other major cryptocurrency pairs)
+
+Available Timeframes:
+    - 1H  (1 hour candles)
+    - 4H  (4 hour candles)
+    - 1D  (daily candles)
+
+Options:
+    --ticker     Trading pair to analyze (default: BTCUSDT)
+    --timeframe  Candle timeframe (default: 1H)
+    --debug      Enable debug logging
+
+Output Information:
+    Displays for the last candle:
+    - Timestamp
+    - Basic Data: Open, High, Low, Close, Volume
+    - Pattern: If a candlestick pattern is detected
+    - EMAs: If available, shows all EMA periods
+    - RSI: Value and Slope if available
+    
+    If no data is found, shows:
+    - Total records count for the ticker
+    - Available timeframes for the ticker
 """
 
 import argparse

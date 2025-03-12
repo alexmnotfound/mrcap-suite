@@ -1,27 +1,55 @@
 """
 Script to display market data for a specific day or date range.
-Run with: python -m scripts.show_market_data [options]
+Run with: python -m scripts.get_market_data [options]
 
 Examples:
     # Show today's BTC data
-    python -m scripts.show_market_data
+    python -m scripts.get_market_data
 
     # Show specific date
-    python -m scripts.show_market_data --date 2025-02-16 --ticker BTCUSDT --timeframe 1H
+    python -m scripts.get_market_data --date 2025-02-16 --ticker BTCUSDT --timeframe 1H
     
     # Show date range
-    python -m scripts.show_market_data --start 2025-02-15 --end 2025-02-18 --timeframe 1D
+    python -m scripts.get_market_data --start 2025-02-15 --end 2025-02-18 --timeframe 1D
+
+Available Tickers:
+    - BTCUSDT
+    - ETHUSDT
+    - BNBUSDT
+    (and other major cryptocurrency pairs)
+
+Available Timeframes:
+    - 1H  (1 hour candles)
+    - 4H  (4 hour candles)
+    - 1D  (daily candles)
+
+Options:
+    --date       Single date to show (YYYY-MM-DD) (default: today)
+    --start      Start date for range (YYYY-MM-DD)
+    --end        End date for range (YYYY-MM-DD)
+    --ticker     Trading pair to analyze (default: BTCUSDT)
+    --timeframe  Candle timeframe (default: 1D)
+
+Output Information:
+    For each candle, displays:
+    - Basic Data: Open, High, Low, Close, Volume
+    - Pattern: If a candlestick pattern is detected
+    - EMAs: Various exponential moving averages
+    - RSI: Value, Slope, and Divergence
+    - Monthly Pivot Points: PP, R1-R5, S1-S5
+    - Chandelier Exit: Long/Short stops and signals
+    - OBV (On Balance Volume): Value, MA, Bollinger Bands
 """
 
 import argparse
 from datetime import datetime, timedelta
 import pandas as pd
-from libs.market_data.fetch_data import fetch_market_data
+from libs.market_data.get_data import get_market_data
 from libs.utils.logging import setup_logging
 import logging
 
 def parse_args():
-    parser = argparse.ArgumentParser(description='Show market data for a specific day or date range')
+    parser = argparse.ArgumentParser(description='Get market data for a specific day or date range')
     date_group = parser.add_mutually_exclusive_group()
     date_group.add_argument('--date', type=str,
                           help='Single date to show (YYYY-MM-DD) (default: today)')
@@ -160,7 +188,7 @@ def main():
         # Validate dates
         start_time, end_time = validate_dates(start_time, end_time)
         
-        df = fetch_market_data(
+        df = get_market_data(
             ticker=args.ticker,
             timeframe=args.timeframe,
             start_time=start_time,
@@ -191,7 +219,7 @@ def main():
         logger.error(str(e))
         return
     except Exception as e:
-        logger.error(f"Error fetching data: {str(e)}", exc_info=True)
+        logger.error(f"Error getting market data: {str(e)}", exc_info=True)
         raise
 
 if __name__ == "__main__":
