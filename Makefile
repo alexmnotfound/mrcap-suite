@@ -111,6 +111,8 @@ analysis:
 		$(if $(TIMEFRAME),--timeframe $(TIMEFRAME)) \
 		$(if $(TIMESTAMP),--timestamp "$(TIMESTAMP)") \
 		$(if $(DATE),--date $(DATE)) \
+		$(if $(START),--start $(START)) \
+		$(if $(END),--end $(END)) \
 		$(DEBUG_ARG)
 
 clean:
