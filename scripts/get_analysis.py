@@ -4,7 +4,7 @@ Run with: python -m scripts.get_analysis [options]
 
 Examples:
     # Get last 7 days of BTC/USDT hourly data
-    python -m scripts.get_analysis --ticker BTCUSDT --timeframe 1H --days 7
+    python -m scripts.get_analysis --ticker BTCUSDT --timeframe 1h --days 7
 
     # Get 30 days of ETH/USDT 4-hour data with debug info
     python -m scripts.get_analysis --ticker ETHUSDT --timeframe 4H --days 30 --debug
@@ -19,13 +19,13 @@ Available Tickers:
     (and other major cryptocurrency pairs)
 
 Available Timeframes:
-    - 1H  (1 hour)
+    - 1h  (1 hour)
     - 4H  (4 hours)
     - 1D  (1 day)
 
 Options:
     --ticker     Trading pair to analyze (default: BTCUSDT)
-    --timeframe  Candle timeframe (default: 1H)
+    --timeframe  Candle timeframe (default: 1h)
     --days       Number of days to look back (default: 7)
     --output     Output CSV file path (default: data.csv)
     --debug      Enable debug logging
@@ -43,8 +43,8 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Fetch and analyze market data')
     parser.add_argument('--ticker', type=str, default='BTCUSDT',
                        help='Ticker symbol (default: BTCUSDT)')
-    parser.add_argument('--timeframe', type=str, default='1H',
-                       help='Timeframe (default: 1H)')
+    parser.add_argument('--timeframe', type=str, default='1h',
+                       help='Timeframe (default: 1h)')
     parser.add_argument('--days', type=int, default=7,
                        help='Number of days to fetch (default: 7)')
     parser.add_argument('--output', type=str, default='data.csv',

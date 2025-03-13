@@ -44,7 +44,7 @@ def fetch_binance_ohlc(ticker: str, interval: str, start_time: datetime = None, 
     
     Args:
         ticker: Trading pair symbol
-        interval: Timeframe interval
+        interval: Timeframe interval (in Binance format: 1h, 4h, 1d, 1M)
         start_time: Optional start datetime
         end_time: Optional end datetime
         
@@ -55,6 +55,10 @@ def fetch_binance_ohlc(ticker: str, interval: str, start_time: datetime = None, 
         RequestException: If API request fails
         ValueError: If invalid parameters or response format
     """
+    # Validate interval format
+    if interval not in TIMEFRAMES.values():
+        raise ValueError(f"Invalid interval: {interval}. Must be one of: {', '.join(TIMEFRAMES.values())}")
+    
     params = {
         "symbol": ticker,  
         "interval": interval,
@@ -172,9 +176,6 @@ def save_to_db(data: list, ticker: str, timeframe: str):
         # Validate timeframe
         if timeframe not in TIMEFRAMES.values():
             raise ValueError(f"Invalid timeframe: {timeframe}")
-            
-        # Convert timeframe to standard format
-        timeframe = timeframe.upper() if timeframe != '1M' else timeframe
         
         # Ensure ticker exists in database
         with db_cursor() as cursor:
@@ -221,7 +222,7 @@ def save_to_db(data: list, ticker: str, timeframe: str):
         if pattern_data:
             save_patterns_batch(ticker, timeframe, pattern_data)
         
-        logger.info(f"Successfully saved {len(data)} candles for {ticker} {timeframe}")
+        logger.info(f"Successfully saved {len(data)} candles data for {ticker} {timeframe}")
         return timestamps
         
     except Exception as e:

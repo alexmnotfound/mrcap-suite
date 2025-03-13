@@ -10,7 +10,7 @@ Examples:
     python -m scripts.update_ohlc --ticker BTCUSDT
 
     # Update specific timeframe
-    python -m scripts.update_ohlc --timeframe 1H
+    python -m scripts.update_ohlc --timeframe 1h
 
     # Only update OHLC data (skip indicators)
     python -m scripts.update_ohlc --skip-indicators
@@ -25,7 +25,7 @@ Available Tickers:
     (and other major cryptocurrency pairs)
 
 Available Timeframes:
-    - 1H  (1 hour candles)
+    - 1h  (1 hour candles)
     - 4H  (4 hour candles)
     - 1D  (daily candles)
 

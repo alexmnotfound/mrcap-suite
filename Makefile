@@ -32,7 +32,7 @@ help:
 	@echo ""
 	@echo "Optional parameters:"
 	@echo "  TICKER=BTCUSDT    - Specify ticker (default: BTCUSDT)"
-	@echo "  TIMEFRAME=1H      - Specify timeframe (1H/4H/1D)"
+	@echo "  TIMEFRAME=1h      - Specify timeframe (1h/4H/1D)"
 	@echo "  DAYS=7           - Number of days to look back"
 	@echo "  START=2025-02-01 - Start date for historical data"
 	@echo "  END=2025-02-21   - End date for historical data"

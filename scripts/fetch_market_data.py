@@ -22,7 +22,7 @@ Available Tickers:
     (and other major cryptocurrency pairs)
 
 Available Timeframes:
-    - 1H  (1 hour candles)
+    - 1h  (1 hour candles)
     - 4H  (4 hour candles)
     - 1D  (daily candles)
 
@@ -64,7 +64,7 @@ Note: This script requires an active internet connection and
 import argparse
 from datetime import datetime, timezone, timedelta
 from libs.market_data.fetch_ohlc import (
-    TICKERS, TIMEFRAMES, fetch_ohlc, save_to_db, update_indicators
+    TICKERS, TIMEFRAMES, fetch_binance_ohlc, save_to_db, update_indicators
 )
 from libs.market_data.init_db import init_db
 from libs.utils.logging import setup_logging
@@ -129,7 +129,7 @@ def fetch_and_save_data(
         historical_start = start_time - get_interval_timedelta(timeframe) * required_candles
         
         # Fetch data including historical data needed for indicators
-        data = fetch_ohlc(ticker, timeframe, start_time=historical_start, end_time=end_time)
+        data = fetch_binance_ohlc(ticker, timeframe, start_time=historical_start, end_time=end_time)
         if not data:
             logger.debug("No data returned from Binance")
             return []

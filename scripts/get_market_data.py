@@ -7,7 +7,7 @@ Examples:
     python -m scripts.get_market_data
 
     # Show specific date
-    python -m scripts.get_market_data --date 2025-02-16 --ticker BTCUSDT --timeframe 1H
+    python -m scripts.get_market_data --date 2025-02-16 --ticker BTCUSDT --timeframe 1h
     
     # Show date range
     python -m scripts.get_market_data --start 2025-02-15 --end 2025-02-18 --timeframe 1D
@@ -19,7 +19,7 @@ Available Tickers:
     (and other major cryptocurrency pairs)
 
 Available Timeframes:
-    - 1H  (1 hour candles)
+    - 1h  (1 hour candles)
     - 4H  (4 hour candles)
     - 1D  (daily candles)
 
@@ -59,8 +59,8 @@ def parse_args():
                        help='End date (YYYY-MM-DD) (default: today if start provided)')
     parser.add_argument('--ticker', type=str, default='BTCUSDT',
                        help='Ticker symbol (default: BTCUSDT)')
-    parser.add_argument('--timeframe', type=str, default='1D', choices=['1H', '4H', '1D'],
-                       help='Timeframe (1H/4H/1D) (default: 1D)')
+    parser.add_argument('--timeframe', type=str, default='1D',
+                       help='Timeframe (1h/4H/1D) (default: 1D)')
     return parser.parse_args()
 
 def parse_date(date_str: str) -> datetime:
@@ -206,7 +206,7 @@ def main():
         print(f"\n=== {args.ticker} {args.timeframe} Data {date_range} ===")
         print("=" * 80)
         
-        if args.timeframe in ['1H', '4H']:
+        if args.timeframe in ['1h', '4H']:
             # For intraday timeframes, show all candles
             for timestamp, row in df.iterrows():
                 print_candle_data(timestamp, row)

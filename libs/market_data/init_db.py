@@ -28,7 +28,7 @@ def create_tables():
             volume NUMERIC(18, 8) NOT NULL,
             PRIMARY KEY(ticker, timeframe, timestamp),
             CONSTRAINT ohlc_data_timeframe_check 
-                CHECK (timeframe IN ('1H', '4H', '1D', '1M'))
+                CHECK (timeframe IN ('1h', '4h', '1d', '1M'))
         );
         """)
 

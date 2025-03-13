@@ -10,7 +10,7 @@ Examples:
     python -m scripts.get_last_candle --ticker BTCUSDT
 
     # Show last candle for specific timeframe
-    python -m scripts.get_last_candle --timeframe 1H
+    python -m scripts.get_last_candle --timeframe 1h
 
     # Show last candle with debug info
     python -m scripts.get_last_candle --debug
@@ -22,13 +22,13 @@ Available Tickers:
     (and other major cryptocurrency pairs)
 
 Available Timeframes:
-    - 1H  (1 hour candles)
+    - 1h  (1 hour candles)
     - 4H  (4 hour candles)
     - 1D  (daily candles)
 
 Options:
     --ticker     Trading pair to analyze (default: BTCUSDT)
-    --timeframe  Candle timeframe (default: 1H)
+    --timeframe  Candle timeframe (default: 1h)
     --debug      Enable debug logging
 
 Output Information:
@@ -54,6 +54,7 @@ import logging
 def get_last_candle(ticker: str, timeframe: str) -> dict:
     """Get the last available candle from the database."""
     with db_cursor() as cursor:
+        # Get OHLC data
         cursor.execute("""
         SELECT 
             timestamp,
@@ -74,7 +75,7 @@ def get_last_candle(ticker: str, timeframe: str) -> dict:
         if not result:
             return None
             
-        return {
+        candle_data = {
             'timestamp': result[0],
             'open': float(result[1]),
             'high': float(result[2]),
@@ -83,6 +84,26 @@ def get_last_candle(ticker: str, timeframe: str) -> dict:
             'volume': float(result[5]),
             'pattern': result[6]
         }
+        
+        # Get monthly pivots for the current month
+        cursor.execute("""
+        WITH monthly_data AS (
+            SELECT timestamp, level, value,
+                   DATE_TRUNC('month', timestamp) as pivot_month
+            FROM pivots 
+            WHERE ticker = %s 
+            AND timeframe = '1M'
+            AND DATE_TRUNC('month', timestamp) = DATE_TRUNC('month', %s::timestamp - INTERVAL '1 month')
+        )
+        SELECT level, value
+        FROM monthly_data
+        ORDER BY level;
+        """, (ticker, candle_data['timestamp']))
+        
+        for level, value in cursor.fetchall():
+            candle_data[f'M_{level}'] = float(value)
+            
+        return candle_data
 
 def main():
     parser = argparse.ArgumentParser(description='Fetch last available candle')
@@ -100,16 +121,18 @@ def main():
         logger.error(f"Invalid ticker: {args.ticker}")
         return
     
-    if args.timeframe not in TIMEFRAMES.values():
-        logger.error(f"Invalid timeframe: {args.timeframe}")
+    # Ensure timeframe is uppercase for validation
+    timeframe = args.timeframe
+    if timeframe not in TIMEFRAMES.values():
+        logger.error(f"Invalid timeframe: {timeframe}")
         return
     
     try:
         # Get last candle
-        logger.debug(f"Fetching last candle for {args.ticker} {args.timeframe}")
-        candle = get_last_candle(args.ticker, args.timeframe)
+        logger.debug(f"Fetching last candle for {args.ticker} {timeframe}")
+        candle = get_last_candle(args.ticker, timeframe)
         if not candle:
-            logger.error(f"No data found for {args.ticker} {args.timeframe}")
+            logger.error(f"No data found for {args.ticker} {timeframe}")
             
             # Check if we have any data at all
             with db_cursor() as cursor:
@@ -129,7 +152,7 @@ def main():
             return
         
         # Print candle info
-        print(f"\nLast candle for {args.ticker} {args.timeframe}:")
+        print(f"\nLast candle for {args.ticker} {timeframe}:")
         print(f"Time: {candle['timestamp']}")
         print(f"Open:   {candle['open']:.2f}")
         print(f"High:   {candle['high']:.2f}")
@@ -138,6 +161,14 @@ def main():
         print(f"Volume: {candle['volume']:.8f}")
         if candle['pattern']:
             print(f"Pattern: {candle['pattern']}")
+        
+        # Print monthly pivots if available
+        pivot_cols = [col for col in candle.keys() if col.startswith('M_')]
+        if pivot_cols:
+            print("\nMonthly Pivot Points:")
+            for col in sorted(pivot_cols):
+                level = col.replace('M_', '')
+                print(f"  {level}: {candle[col]:.2f}")
         
         # Also get indicator values
         with db_cursor() as cursor:
@@ -149,7 +180,7 @@ def main():
             AND timeframe = %s 
             AND timestamp = %s
             ORDER BY period
-            """, (args.ticker, args.timeframe, candle['timestamp']))
+            """, (args.ticker, timeframe, candle['timestamp']))
             
             emas = cursor.fetchall()
             if emas:
@@ -164,7 +195,7 @@ def main():
             WHERE ticker = %s 
             AND timeframe = %s 
             AND timestamp = %s
-            """, (args.ticker, args.timeframe, candle['timestamp']))
+            """, (args.ticker, timeframe, candle['timestamp']))
             
             rsi = cursor.fetchone()
             if rsi:

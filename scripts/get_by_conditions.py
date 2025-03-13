@@ -31,7 +31,7 @@ Conditions:
     --rsi-min        Minimum RSI value
     --rsi-max        Maximum RSI value
     --volume-min     Minimum volume
-    --timeframe      Candle timeframe (1H/4H/1D)
+    --timeframe      Candle timeframe (1h/4H/1D)
     --days          Number of days to look back
     --start         Start date (YYYY-MM-DD)
     --end           End date (YYYY-MM-DD)
@@ -106,7 +106,7 @@ def main():
     parser = argparse.ArgumentParser(description='Get candlestick patterns with conditions')
     parser.add_argument('--pattern', type=str, help='Candlestick pattern to search for')
     parser.add_argument('--ticker', type=str, default='BTCUSDT', help='Trading pair')
-    parser.add_argument('--timeframe', type=str, default='1H', help='Timeframe')
+    parser.add_argument('--timeframe', type=str, default='1h', help='Timeframe')
     
     # Date range options (mutually exclusive with --days)
     date_group = parser.add_mutually_exclusive_group()
