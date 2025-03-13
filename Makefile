@@ -32,7 +32,7 @@ help:
 	@echo ""
 	@echo "Optional parameters:"
 	@echo "  TICKER=BTCUSDT    - Specify ticker (default: BTCUSDT)"
-	@echo "  TIMEFRAME=1h      - Specify timeframe (1h/4H/1D)"
+	@echo "  TIMEFRAME=1h      - Specify timeframe (1h/4h/1d)"
 	@echo "  DAYS=7           - Number of days to look back"
 	@echo "  START=2025-02-01 - Start date for historical data"
 	@echo "  END=2025-02-21   - End date for historical data"
@@ -40,7 +40,8 @@ help:
 	@echo "  RSI_MIN=30       - Minimum RSI value"
 	@echo "  RSI_MAX=70       - Maximum RSI value"
 	@echo "  VOLUME_MIN=1000  - Minimum volume"
-	@echo "  OUTPUT=data.csv   - Output file for analysis"
+	@echo "  TIMESTAMP=2025-03-13 10:00:00 - Specific timestamp to analyze"
+	@echo "  DATE=2025-03-13  - Specific date to analyze"
 	@echo "  DEBUG=TRUE       - Enable debug logging"
 
 	@echo ""
@@ -50,7 +51,10 @@ help:
 	@echo "  make find PATTERN=Doji RSI_MIN=65   - Find patterns"
 	@echo "  make show TICKER=BTCUSDT DAYS=30    - Show market data"
 	@echo "  make last TICKER=BTCUSDT            - Show last candle"
-	@echo "  make analysis TICKER=BTCUSDT DAYS=7 OUTPUT=btc_analysis.csv - Get BTC analysis"
+	@echo "  make analysis                      - Show last candle analysis"
+	@echo "  make analysis TICKER=ETHUSDT TIMEFRAME=4h - Show last ETH 4h candle"
+	@echo "  make analysis TIMESTAMP=\"2025-03-13 10:00:00\" - Analyze specific timestamp"
+	@echo "  make analysis DATE=2025-03-13      - Analyze specific date"
 	@echo "  make update DEBUG=TRUE              - Update with debug logging enabled"
 
 venv:
@@ -105,8 +109,8 @@ analysis:
 	$(PYTHON) -m $(GET_ANALYSIS) \
 		$(if $(TICKER),--ticker $(TICKER)) \
 		$(if $(TIMEFRAME),--timeframe $(TIMEFRAME)) \
-		$(if $(DAYS),--days $(DAYS)) \
-		$(if $(OUTPUT),--output $(OUTPUT)) \
+		$(if $(TIMESTAMP),--timestamp "$(TIMESTAMP)") \
+		$(if $(DATE),--date $(DATE)) \
 		$(DEBUG_ARG)
 
 clean:
