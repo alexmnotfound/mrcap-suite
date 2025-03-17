@@ -1,14 +1,52 @@
 from dataclasses import dataclass
 import os
+from typing import Dict, List
 
 @dataclass
 class DatabaseConfig:
-    host: str = os.getenv("DB_HOST", "localhost")
-    port: int = int(os.getenv("DB_PORT", "5432"))
-    database: str = os.getenv("DB_NAME", "postgres")
-    user: str = os.getenv("DB_USER", "user")
-    password: str = os.getenv("DB_PASSWORD", "password")
+    def __init__(self):
+        self.host = os.getenv("DB_HOST", "localhost")
+        self.port = os.getenv("DB_PORT", "5432")
+        self.database = os.getenv("DB_NAME", "YOUR_DB_NAME")
+        self.user = os.getenv("DB_USER", "YOUR_DB_USER")
+        self.password = os.getenv("DB_PASSWORD", 'YOUR_DB_PASS')
 
     @property
-    def connection_string(self) -> str:
-        return f"dbname={self.database} user={self.user} password={self.password} host={self.host} port={self.port}"
+    def connection_string(self):
+        return f"postgresql://{self.user}:{self.password}@{self.host}:{self.port}/{self.database}"
+
+class APIConfig:
+    BASE_URL = os.getenv("BINANCE_API_URL", "https://data-api.binance.vision")  # Updated endpoint
+
+@dataclass
+class MarketDataConfig:
+    TICKERS: List[str] = None
+    TIMEFRAMES: Dict[str, str] = None
+    EMA_PERIODS: List[int] = None
+
+    def __post_init__(self):
+        # Default values if not provided
+        if self.TICKERS is None:
+            self.TICKERS = os.getenv('MARKET_TICKERS', 'BTCUSDT,ETHUSDT').split(',')
+            
+        if self.TIMEFRAMES is None:
+            # Use Binance's exact timeframe format
+            default_timeframes = {
+                '1h': '1h',  # 1 hour
+                '4h': '4h',  # 4 hours
+                '1d': '1d',  # 1 day
+                '1M': '1M'   # 1 month
+            }
+            self.TIMEFRAMES = default_timeframes
+
+        if self.EMA_PERIODS is None:
+            # Can be configured via env var as comma-separated list
+            default_periods = [11, 22, 50, 200]
+            periods_str = os.getenv('EMA_PERIODS')
+            if periods_str:
+                self.EMA_PERIODS = [int(p) for p in periods_str.split(',')]
+            else:
+                self.EMA_PERIODS = default_periods
+
+# Create singleton instance
+market_config = MarketDataConfig()
