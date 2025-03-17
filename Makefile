@@ -18,7 +18,7 @@ DEBUG ?= FALSE
 # Convert DEBUG flag to script argument
 DEBUG_ARG = $(if $(filter TRUE true,$(DEBUG)),--debug,)
 
-.PHONY: venv install update fetch find show last analysis help clean
+.PHONY: venv install update fetch find show last analysis help clean truncate
 
 help:
 	@echo "Available commands:"
@@ -29,6 +29,7 @@ help:
 	@echo "  make show          - Show market data"
 	@echo "  make last          - Show last available candle"
 	@echo "  make analysis      - Get market analysis with indicators"
+	@echo "  make truncate      - Clear all data from database tables"
 	@echo ""
 	@echo "Optional parameters:"
 	@echo "  TICKER=BTCUSDT    - Specify ticker (default: BTCUSDT)"
@@ -56,6 +57,7 @@ help:
 	@echo "  make analysis TIMESTAMP=\"2025-03-13 10:00:00\" - Analyze specific timestamp"
 	@echo "  make analysis DATE=2025-03-13      - Analyze specific date"
 	@echo "  make update DEBUG=TRUE              - Update with debug logging enabled"
+	@echo "  make truncate                      - Clear all data from database"
 
 venv:
 	python -m venv $(VENV)
@@ -118,4 +120,7 @@ analysis:
 clean:
 	rm -rf $(VENV)
 	find . -type d -name "__pycache__" -exec rm -r {} +
-	find . -type f -name "*.pyc" -delete 
+	find . -type f -name "*.pyc" -delete
+
+truncate:
+	$(PYTHON) -c "from libs.market_data.init_db import truncate_tables; truncate_tables()" 

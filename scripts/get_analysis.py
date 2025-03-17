@@ -46,9 +46,10 @@ Output:
     - timestamp: Candle timestamp
     - open, high, low, close, volume: Basic candle data
     - pattern: Detected candlestick pattern
-    - rsi, rsi_slope, rsi_div: RSI indicators
+    - rsi: RSI indicator
     - ema_*: Various exponential moving averages
     - M_*: Monthly pivot points
+    - ce_long_stop, ce_short_stop, ce_direction, ce_signal: Chandelier Exit values
 """
 
 import argparse
@@ -146,9 +147,7 @@ def get_candle_data(ticker: str, timeframe: str, timestamp: datetime = None, dat
                     'volume': float(result[5]),
                     'pattern': result[6],
                     # Initialize indicator columns with None
-                    'rsi': None,
-                    'rsi_slope': None,
-                    'rsi_div': None
+                    'rsi': None
                 }
                 
                 # Get monthly pivots for the current month
@@ -184,7 +183,7 @@ def get_candle_data(ticker: str, timeframe: str, timestamp: datetime = None, dat
                 
                 # Get RSI
                 cursor.execute("""
-                SELECT value, slope, divergence
+                SELECT value
                 FROM rsi 
                 WHERE ticker = %s 
                 AND timeframe = %s 
@@ -194,8 +193,22 @@ def get_candle_data(ticker: str, timeframe: str, timestamp: datetime = None, dat
                 rsi = cursor.fetchone()
                 if rsi:
                     candle_data['rsi'] = float(rsi[0]) if rsi[0] is not None else None
-                    candle_data['rsi_slope'] = float(rsi[1]) if rsi[1] is not None else None
-                    candle_data['rsi_div'] = float(rsi[2]) if rsi[2] is not None else None
+                
+                # Get Chandelier Exit
+                cursor.execute("""
+                SELECT long_stop, short_stop, direction, signal
+                FROM chandelier_exit 
+                WHERE ticker = %s 
+                AND timeframe = %s 
+                AND timestamp = %s
+                """, (ticker, timeframe, candle_data['timestamp']))
+                
+                ce = cursor.fetchone()
+                if ce:
+                    candle_data['ce_long_stop'] = float(ce[0]) if ce[0] is not None else None
+                    candle_data['ce_short_stop'] = float(ce[1]) if ce[1] is not None else None
+                    candle_data['ce_direction'] = int(ce[2]) if ce[2] is not None else None
+                    candle_data['ce_signal'] = int(ce[3]) if ce[3] is not None else None
                     
                 candles.append(candle_data)
             
@@ -233,9 +246,7 @@ def get_candle_data(ticker: str, timeframe: str, timestamp: datetime = None, dat
                 'volume': float(result[5]),
                 'pattern': result[6],
                 # Initialize indicator columns with None
-                'rsi': None,
-                'rsi_slope': None,
-                'rsi_div': None
+                'rsi': None
             }
             
             # Get monthly pivots for the current month
@@ -271,7 +282,7 @@ def get_candle_data(ticker: str, timeframe: str, timestamp: datetime = None, dat
             
             # Get RSI
             cursor.execute("""
-            SELECT value, slope, divergence
+            SELECT value
             FROM rsi 
             WHERE ticker = %s 
             AND timeframe = %s 
@@ -281,8 +292,22 @@ def get_candle_data(ticker: str, timeframe: str, timestamp: datetime = None, dat
             rsi = cursor.fetchone()
             if rsi:
                 candle_data['rsi'] = float(rsi[0]) if rsi[0] is not None else None
-                candle_data['rsi_slope'] = float(rsi[1]) if rsi[1] is not None else None
-                candle_data['rsi_div'] = float(rsi[2]) if rsi[2] is not None else None
+            
+            # Get Chandelier Exit
+            cursor.execute("""
+            SELECT long_stop, short_stop, direction, signal
+            FROM chandelier_exit 
+            WHERE ticker = %s 
+            AND timeframe = %s 
+            AND timestamp = %s
+            """, (ticker, timeframe, candle_data['timestamp']))
+            
+            ce = cursor.fetchone()
+            if ce:
+                candle_data['ce_long_stop'] = float(ce[0]) if ce[0] is not None else None
+                candle_data['ce_short_stop'] = float(ce[1]) if ce[1] is not None else None
+                candle_data['ce_direction'] = int(ce[2]) if ce[2] is not None else None
+                candle_data['ce_signal'] = int(ce[3]) if ce[3] is not None else None
                 
             candles.append(candle_data)
             
@@ -306,7 +331,8 @@ def create_dataframe(candles: list) -> pd.DataFrame:
     # Define all possible columns
     all_columns = [
         'open', 'high', 'low', 'close', 'volume', 'pattern',
-        'rsi', 'rsi_slope', 'rsi_div'
+        'rsi',
+        'ce_long_stop', 'ce_short_stop', 'ce_direction', 'ce_signal'
     ]
     
     # Add EMA columns
