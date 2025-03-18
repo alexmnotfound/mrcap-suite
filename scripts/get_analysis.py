@@ -60,6 +60,7 @@ from libs.market_data.db import db_cursor
 from libs.utils.logging import setup_logging
 import logging
 import os
+import numpy as np
 
 def get_candle_data(ticker: str, timeframe: str, timestamp: datetime = None, date: datetime = None, 
                     start_date: datetime = None, end_date: datetime = None) -> list:
@@ -328,11 +329,48 @@ def create_dataframe(candles: list) -> pd.DataFrame:
     # Set timestamp as index
     df.set_index('timestamp', inplace=True)
     
+    # For debugging Chandelier Exit, keep all values
+    if 'ce_direction' in df.columns:
+        # Map direction values but keep original for debugging
+        df['ce_direction_text'] = df['ce_direction'].map({
+            1: 'LONG',
+            -1: 'SHORT'
+        })
+        
+        # Keep both stops visible
+        def round_stop(value):
+            if pd.isna(value):
+                return value
+            if value >= 100:
+                return round(value, 2)
+            return round(value, 3)
+            
+        df['ce_long_stop'] = df['ce_long_stop'].apply(round_stop)
+        df['ce_short_stop'] = df['ce_short_stop'].apply(round_stop)
+        
+        # Add signal column if present
+        if 'ce_signal' in df.columns:
+            df['ce_signal'] = df['ce_signal'].map({
+                1: 'BUY',
+                -1: 'SELL',
+                0: '-'
+            })
+    
+    # Round EMA values
+    ema_cols = [col for col in df.columns if col.startswith('ema_')]
+    for col in ema_cols:
+        df[col] = df[col].apply(lambda x: round(x, 2) if pd.notna(x) else x)
+    
+    # Round pivot values
+    pivot_cols = [col for col in df.columns if col.startswith('M_')]
+    for col in pivot_cols:
+        df[col] = df[col].apply(lambda x: round(x, 2) if pd.notna(x) else x)
+    
     # Define all possible columns
     all_columns = [
         'open', 'high', 'low', 'close', 'volume', 'pattern',
-        'rsi',
-        'ce_long_stop', 'ce_short_stop', 'ce_direction', 'ce_signal'
+        'ce_direction', 'ce_direction_text', 'ce_long_stop', 'ce_short_stop', 'ce_signal',  # Debug columns
+        'rsi'
     ]
     
     # Add EMA columns
@@ -490,6 +528,7 @@ def main():
         # Print DataFrame
         print("\nAnalysis DataFrame:")
         print(df)
+        # print(df[['open', 'close', 'ce_long_stop', 'ce_short_stop', 'ce_signal', 'ce_direction_text']])
         
     except Exception as e:
         logger.error(f"Error analyzing market data: {e}")
