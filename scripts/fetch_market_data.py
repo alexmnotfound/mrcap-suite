@@ -74,7 +74,7 @@ import pandas as pd
 def parse_date(date_str: str) -> datetime:
     """Parse date string to datetime."""
     dt = datetime.strptime(date_str, '%Y-%m-%d')
-    return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
 
 def get_required_history_length(timeframe: str) -> int:
     """Get the number of historical candles needed for indicator calculations."""
@@ -201,7 +201,7 @@ def main():
             logger.info("Database initialization complete")
         
         # Determine date range
-        end_time = parse_date(args.end) if args.end else datetime.now(timezone.utc)
+        end_time = parse_date(args.end) if args.end else datetime.now().astimezone(timezone.utc)
         if args.start:
             start_time = parse_date(args.start)
         else:

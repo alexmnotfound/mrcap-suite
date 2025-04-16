@@ -61,6 +61,12 @@ from libs.utils.logging import setup_logging
 import logging
 import os
 import numpy as np
+from libs.market_data.get_data import get_market_data
+from libs.ta_lib.indicators.chandelier import add_chandelier_exit
+from libs.ta_lib.indicators.rsi import add_rsi
+from libs.ta_lib.indicators.obv import add_obv
+from libs.ta_lib.indicators.ema import add_emas
+from libs.ta_lib.indicators.candles import add_candle_patterns
 
 def get_candle_data(ticker: str, timeframe: str, timestamp: datetime = None, date: datetime = None, 
                     start_date: datetime = None, end_date: datetime = None) -> list:
@@ -395,6 +401,45 @@ def create_dataframe(candles: list) -> pd.DataFrame:
     logging.debug(f"Final DataFrame columns: {new_df.columns.tolist()}")
     
     return new_df
+
+def get_analysis(ticker: str, timeframe: str, start_time: datetime = None, end_time: datetime = None) -> pd.DataFrame:
+    """
+    Get market data with all indicators calculated.
+    
+    Args:
+        ticker: Trading pair symbol (e.g., 'BTCUSDT')
+        timeframe: Timeframe in Binance format (e.g., '1h', '4h', '1d', '1M')
+        start_time: Start datetime (default: 7 days ago)
+        end_time: End datetime (default: now)
+    
+    Returns:
+        DataFrame with OHLC data and all indicators
+    """
+    # Ensure timestamps are timezone-aware and in UTC
+    if end_time is None:
+        end_time = datetime.now(timezone.utc)
+    if start_time is None:
+        start_time = end_time - pd.Timedelta(days=7)
+        
+    if start_time.tzinfo is None:
+        start_time = start_time.replace(tzinfo=timezone.utc)
+    if end_time.tzinfo is None:
+        end_time = end_time.replace(tzinfo=timezone.utc)
+    
+    # Get base market data
+    df = get_market_data(ticker, timeframe, start_time, end_time, include_indicators=False)
+    
+    if df.empty:
+        return df
+    
+    # Calculate indicators
+    df = add_emas(df, periods=[9, 21, 50, 200])
+    df = add_rsi(df, period=14)
+    df = add_obv(df, ma_period=20, bb_period=20, bb_std=2)
+    df = add_chandelier_exit(df, period=22, atr_mult=3)
+    df = add_candle_patterns(df)
+    
+    return df
 
 def main():
     parser = argparse.ArgumentParser(description='Analyze market data for a specific timestamp or period')

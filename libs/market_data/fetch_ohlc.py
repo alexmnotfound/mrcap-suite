@@ -187,7 +187,7 @@ def save_to_db(data: list, ticker: str, timeframe: str):
         df_ohlc = pd.DataFrame()
         
         for candle in data:
-            timestamp = datetime.fromtimestamp(candle[0] / 1000, timezone.utc)
+            timestamp = datetime.fromtimestamp(candle[0] / 1000).astimezone(timezone.utc)
             open_price, high, low, close, volume = map(float, candle[1:6])
             
             timestamps.append(timestamp)

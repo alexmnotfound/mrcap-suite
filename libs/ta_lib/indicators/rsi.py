@@ -31,7 +31,8 @@ def add_rsi(df: pd.DataFrame, period: int = 14, slope_period: int = 1) -> pd.Dat
     
     # Calculate RS and RSI
     df['rs'] = df.ema_win / df.ema_loss
-    df['rsi'] = 100 - (100 / (1 + df.rs))
+    # Handle case where ema_loss is 0 (all gains, no losses)
+    df['rsi'] = np.where(df['ema_loss'] == 0, 100, 100 - (100 / (1 + df.rs)))
     
     if slope_period > 0:
         # Calculate RSI slope and divergence
